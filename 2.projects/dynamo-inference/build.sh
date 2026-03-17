@@ -28,7 +28,7 @@ print_usage() {
     echo "Options:"
     echo "  -r, --registry REGISTRY   Container registry (e.g., public.ecr.aws/xxxxx)"
     echo "  -t, --tag TAG             Image tag (default: latest)"
-    echo "  -b, --build TARGET        Build target: efa, trtllm, vllm, all (default: all)"
+    echo "  -b, --build TARGET        Build target: efa, trtllm, vllm, combined, all (default: all)"
     echo "  -a, --arch ARCH           CUDA architecture: 80 (A100), 86 (A10), 90 (H100) (optional)"
     echo "  -p, --push                Push images to registry after build"
     echo "  -n, --no-cache            Build without Docker cache"
@@ -104,6 +104,7 @@ fi
 EFA_IMAGE="aws-efa-dynamo"
 TRTLLM_IMAGE="dynamo-trtllm-efa"
 VLLM_IMAGE="dynamo-vllm-efa"
+COMBINED_IMAGE="dynamo-combined-efa"
 
 # Set GPU suffix based on architecture
 GPU_SUFFIX=""
@@ -206,6 +207,21 @@ build_vllm() {
     fi
 }
 
+build_combined() {
+    local IMAGE_NAME="${COMBINED_IMAGE}${GPU_SUFFIX}"
+    log_info "Building combined (vLLM + TRT-LLM) image: ${IMAGE_NAME}:${TAG}"
+
+    docker build ${CACHE_OPT} \
+        -f Dockerfile.dynamo-combined-efa \
+        -t ${IMAGE_NAME}:${TAG} \
+        .
+
+    if [ -n "$REGISTRY" ]; then
+        docker tag ${IMAGE_NAME}:${TAG} ${REGISTRY}/${IMAGE_NAME}:${TAG}
+        log_info "Tagged: ${REGISTRY}/${IMAGE_NAME}:${TAG}"
+    fi
+}
+
 # Function to check if ECR repository exists and create if needed
 create_ecr_repo() {
     local repo_name=$1
@@ -284,10 +300,14 @@ push_images() {
         vllm)
             create_ecr_repo ${VLLM_IMAGE}${GPU_SUFFIX}
             ;;
+        combined)
+            create_ecr_repo ${COMBINED_IMAGE}${GPU_SUFFIX}
+            ;;
         all)
             create_ecr_repo ${EFA_IMAGE}${GPU_SUFFIX}
             create_ecr_repo ${TRTLLM_IMAGE}${GPU_SUFFIX}
             create_ecr_repo ${VLLM_IMAGE}${GPU_SUFFIX}
+            create_ecr_repo ${COMBINED_IMAGE}${GPU_SUFFIX}
             ;;
     esac
 
@@ -306,13 +326,19 @@ push_images() {
             docker push ${REGISTRY}/${VLLM_IMAGE}${GPU_SUFFIX}:${TAG} || log_error "Failed to push ${VLLM_IMAGE}${GPU_SUFFIX}"
             log_info "✅ Pushed: ${REGISTRY}/${VLLM_IMAGE}${GPU_SUFFIX}:${TAG}"
             ;;
+        combined)
+            docker push ${REGISTRY}/${COMBINED_IMAGE}${GPU_SUFFIX}:${TAG} || log_error "Failed to push ${COMBINED_IMAGE}${GPU_SUFFIX}"
+            log_info "Pushed: ${REGISTRY}/${COMBINED_IMAGE}${GPU_SUFFIX}:${TAG}"
+            ;;
         all)
             docker push ${REGISTRY}/${EFA_IMAGE}${GPU_SUFFIX}:${TAG} || log_error "Failed to push ${EFA_IMAGE}${GPU_SUFFIX}"
-            log_info "✅ Pushed: ${REGISTRY}/${EFA_IMAGE}${GPU_SUFFIX}:${TAG}"
+            log_info "Pushed: ${REGISTRY}/${EFA_IMAGE}${GPU_SUFFIX}:${TAG}"
             docker push ${REGISTRY}/${TRTLLM_IMAGE}${GPU_SUFFIX}:${TAG} || log_error "Failed to push ${TRTLLM_IMAGE}${GPU_SUFFIX}"
-            log_info "✅ Pushed: ${REGISTRY}/${TRTLLM_IMAGE}${GPU_SUFFIX}:${TAG}"
+            log_info "Pushed: ${REGISTRY}/${TRTLLM_IMAGE}${GPU_SUFFIX}:${TAG}"
             docker push ${REGISTRY}/${VLLM_IMAGE}${GPU_SUFFIX}:${TAG} || log_error "Failed to push ${VLLM_IMAGE}${GPU_SUFFIX}"
-            log_info "✅ Pushed: ${REGISTRY}/${VLLM_IMAGE}${GPU_SUFFIX}:${TAG}"
+            log_info "Pushed: ${REGISTRY}/${VLLM_IMAGE}${GPU_SUFFIX}:${TAG}"
+            docker push ${REGISTRY}/${COMBINED_IMAGE}${GPU_SUFFIX}:${TAG} || log_error "Failed to push ${COMBINED_IMAGE}${GPU_SUFFIX}"
+            log_info "Pushed: ${REGISTRY}/${COMBINED_IMAGE}${GPU_SUFFIX}:${TAG}"
             ;;
     esac
 
@@ -362,10 +388,14 @@ case $BUILD_TARGET in
     vllm)
         build_vllm
         ;;
+    combined)
+        build_combined
+        ;;
     all)
         build_efa
         build_trtllm
         build_vllm
+        build_combined
         ;;
     *)
         log_error "Invalid build target: ${BUILD_TARGET}"
@@ -381,4 +411,4 @@ fi
 log_info "Build completed successfully!"
 echo ""
 echo "Built images:"
-docker images | grep -E "(${EFA_IMAGE}|${TRTLLM_IMAGE}|${VLLM_IMAGE})" | head -10
+docker images | grep -E "(${EFA_IMAGE}|${TRTLLM_IMAGE}|${VLLM_IMAGE}|${COMBINED_IMAGE})" | head -10

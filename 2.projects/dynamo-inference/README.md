@@ -184,6 +184,46 @@ docker build -f Dockerfile.python-base -t dynamo-trtllm:latest .
 
 **Expected image size:** ~34 GB
 
+### Dynamo Combined Image (vLLM + TRT-LLM)
+
+A single image containing **both** vLLM and TRT-LLM backends, built from scratch with EFA/NIXL RDMA networking. This is a self-contained multi-stage build that does not depend on the base EFA image above.
+
+```bash
+docker build -f Dockerfile.dynamo-combined-efa -t dynamo-combined-efa:latest .
+```
+
+**Key components:**
+- Dynamo 1.0.0 runtime (Rust + Python)
+- vLLM 0.17.1 (PyTorch-native inference)
+- TRT-LLM 1.3.0rc7 (TensorRT-optimized inference)
+- NIXL 0.10.1 with UCX and libfabric plugins
+- UCX v1.20.x with EFA, GDRCopy, CUDA support
+- libfabric v2.3.0 with EFA provider
+- AWS EFA installer 1.45.1
+- CUDA 12.9 (devel), Python 3.12, Rust 1.93.1
+- NATS v2.10.28 + etcd v3.5.21 (Dynamo service mesh)
+- FFmpeg 7.1 (Apache-licensed codecs, for multimodal models)
+- Built-in SBOM at `/SBOM.txt` and `/THIRD-PARTY-LICENSES`
+
+**Architecture:** 7-stage multi-stage build
+
+| Stage | Name | Purpose |
+|-------|------|---------|
+| 1 | `dynamo_base` | Rust, NATS, etcd, uv, sccache |
+| 2 | `wheel_builder_base` | UCX, GDRCopy, libfabric, FFmpeg, AWS SDK |
+| 3 | `wheel_builder` | NIXL + Dynamo Python wheels |
+| 4 | `pytorch_base` | NGC PyTorch for TRT-LLM |
+| 5 | `trtllm_framework` | TRT-LLM + PyTorch in venv |
+| 6 | `vllm_framework` | vLLM + FlashInfer + LMCache |
+| 7 | `final` | Combined runtime with EFA |
+
+**Expected image size:** ~35-40 GB
+
+**Prebuilt image:**
+```bash
+docker pull public.ecr.aws/v9l4g5s4/dynamo-combined:latest
+```
+
 ### Build Options
 
 ```bash
@@ -193,8 +233,11 @@ docker build --build-arg CUDA_ARCH=86 -f Dockerfile.base -t aws-efa-base:sm86 .
 # Build without cache
 docker build --no-cache -f Dockerfile.base -t aws-efa-base:latest .
 
+# Build combined image
+./build.sh -b combined
+
 # Build and push to ECR
-./build-dynamo.sh --push
+./build.sh --push
 ```
 
 ---
@@ -294,6 +337,76 @@ For detailed deployment instructions, refer to **DEPLOYMENT_GUIDE.md**.
 
 ---
 
+## Kubernetes Deployment (Combined Image)
+
+The `k8s/` directory contains production-tested manifests for deploying the combined image on Amazon EKS with EFA networking.
+
+### Disaggregated Inference (1 GPU per worker)
+
+```bash
+kubectl apply -f k8s/dynamo-combined-disagg-1gpu.yaml -n <namespace>
+```
+
+Deploys one prefill worker pod and one decode worker pod, each using 1 GPU and 1 EFA device. KV-cache is transferred between nodes via NIXL over EFA RDMA.
+
+### Disaggregated Inference (8 GPUs per node)
+
+```bash
+kubectl apply -f k8s/dynamo-combined-disagg-8gpu.yaml -n <namespace>
+```
+
+Deploys 8 data-parallel prefill workers on one node and 8 data-parallel decode workers on another, using all 16 EFA devices per node.
+
+### EFA/NIXL Environment Variables
+
+The following environment variables control NIXL transport over EFA:
+
+| Variable | Value | Description |
+|----------|-------|-------------|
+| `NIXL_BACKEND` | `LIBFABRIC` | Use libfabric transport (EFA provider) |
+| `FI_PROVIDER` | `efa` | Select EFA fabric provider |
+| `FI_EFA_USE_DEVICE_RDMA` | `1` | Enable GPU-direct RDMA over EFA |
+| `FI_EFA_ENABLE_SHM` | `0` | Disable shared memory (cross-node only) |
+| `FI_EFA_ENABLE_SHM_TRANSFER` | `0` | Disable SHM transfer (cross-node only) |
+| `NIXL_SKIP_TOPOLOGY_CHECK` | `1` | Skip NVSwitch topology validation (EFA) |
+| `NIXL_LIBFABRIC_MAX_RAILS` | `1` | Number of EFA rails per worker |
+| `NIXL_SIDE_CHANNEL_PORT` | `5700` | NIXL side channel port (increment per GPU) |
+
+### Required Kubernetes Resources
+
+For EFA-enabled pods on Amazon EKS:
+
+```yaml
+resources:
+  limits:
+    nvidia.com/gpu: "1"
+    vpc.amazonaws.com/efa: "1"
+    hugepages-2Mi: 5120Mi
+  requests:
+    nvidia.com/gpu: "1"
+    vpc.amazonaws.com/efa: "1"
+    hugepages-2Mi: 5120Mi
+```
+
+Volume mounts for EFA and shared memory:
+
+```yaml
+volumes:
+  - name: dev-infiniband
+    hostPath:
+      path: /dev/infiniband
+      type: DirectoryOrCreate
+  - name: hugepages
+    emptyDir:
+      medium: HugePages
+  - name: shm
+    emptyDir:
+      medium: Memory
+      sizeLimit: 64Gi
+```
+
+---
+
 ## Configuration
 
 ### Backend Options for KV-Cache Transfer
@@ -382,4 +495,4 @@ This library is licensed under the MIT-0 License. See the [LICENSE](../../LICENS
 
 ---
 
-**Last Updated:** November 2025
+**Last Updated:** March 2026
