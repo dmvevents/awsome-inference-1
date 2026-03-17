@@ -5,8 +5,8 @@
 # Extracted from working deployment on 2026-03-15T05:04Z.
 #
 # Architecture:
-#   Node 1: Prefill Worker (1x H200) — dmvevents/Nemotron-Mini-4B-Instruct
-#   Node 2: Decode Worker  (1x H200) — dmvevents/Nemotron-Mini-4B-Instruct
+#   Node 1: Prefill Worker (1x GPU) — dmvevents/Nemotron-Mini-4B-Instruct
+#   Node 2: Decode Worker  (1x GPU) — dmvevents/Nemotron-Mini-4B-Instruct
 #   Frontend: Reuse dynamo-frontend-qwen25 (port 8001)
 #   KV cache transfer: NIXL LIBFABRIC over EFA RDMA
 #
@@ -22,7 +22,7 @@
 #   - Frontend deployment running (dynamo-frontend-qwen25)
 #
 # Deploy:
-#   kubectl apply -f p5en-dynamo-nemotron.yaml -n antonai
+#   kubectl apply -f dynamo-nemotron.yaml -n antonai
 #
 # Test:
 #   kubectl exec deploy/dynamo-frontend-qwen25 -n antonai -- \
@@ -31,7 +31,7 @@
 #       -d '{"model":"dmvevents/Nemotron-Mini-4B-Instruct","prompt":"What is 17 mod 5? The answer is","max_tokens":20}'
 # ============================================================
 
-# -- Prefill Worker (Node 1, 1x H200) --
+# -- Prefill Worker (Node 1, 1x GPU) --
 ---
 apiVersion: v1
 kind: Pod
@@ -44,7 +44,7 @@ spec:
   hostNetwork: true
   dnsPolicy: ClusterFirstWithHostNet
   nodeSelector:
-    node.kubernetes.io/instance-type: p5en.48xlarge
+    # node.kubernetes.io/instance-type: p5en.48xlarge  # Uncomment for specific instance
   tolerations:
     - key: nvidia.com/gpu
       operator: Exists
@@ -143,7 +143,7 @@ spec:
         medium: Memory
         sizeLimit: 64Gi
 
-# -- Decode Worker (Node 2, 1x H200) --
+# -- Decode Worker (Node 2, 1x GPU) --
 ---
 apiVersion: v1
 kind: Pod
@@ -156,7 +156,7 @@ spec:
   hostNetwork: true
   dnsPolicy: ClusterFirstWithHostNet
   nodeSelector:
-    node.kubernetes.io/instance-type: p5en.48xlarge
+    # node.kubernetes.io/instance-type: p5en.48xlarge  # Uncomment for specific instance
   tolerations:
     - key: nvidia.com/gpu
       operator: Exists

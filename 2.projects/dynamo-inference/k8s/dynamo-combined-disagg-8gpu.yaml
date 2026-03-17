@@ -16,7 +16,7 @@
 #   - Model cached at /shared/nvrx-demo/hf_cache
 #
 # Deploy:
-#   kubectl apply -f p5en-dynamo-nemotron-8gpu.yaml -n antonai
+#   kubectl apply -f dynamo-nemotron-8gpu.yaml -n antonai
 # ============================================================
 
 # -- Prefill Node: 8 DP workers on GPUs 0-7 --
@@ -33,7 +33,7 @@ spec:
   hostNetwork: true
   dnsPolicy: ClusterFirstWithHostNet
   nodeSelector:
-    node.kubernetes.io/instance-type: p5en.48xlarge
+    # node.kubernetes.io/instance-type: p5en.48xlarge  # Uncomment for specific instance
   tolerations:
     - key: nvidia.com/gpu
       operator: Exists
@@ -166,7 +166,7 @@ spec:
   hostNetwork: true
   dnsPolicy: ClusterFirstWithHostNet
   nodeSelector:
-    node.kubernetes.io/instance-type: p5en.48xlarge
+    # node.kubernetes.io/instance-type: p5en.48xlarge  # Uncomment for specific instance
   tolerations:
     - key: nvidia.com/gpu
       operator: Exists

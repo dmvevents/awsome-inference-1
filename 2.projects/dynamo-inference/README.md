@@ -110,6 +110,44 @@ Deployment targets include:
 
 ---
 
+
+## Supported Instance Types
+
+Dynamo inference works across multiple AWS GPU instance types. The networking layer automatically adapts:
+
+| Instance | GPU | GPUs/Node | EFA | KV Transfer | Verified |
+|----------|-----|-----------|-----|-------------|----------|
+| **p5en.48xlarge** | NVIDIA H200 141GB | 8 | 16x 200Gbps | NIXL LIBFABRIC RDMA | Yes — 8-GPU disagg, 600ms latency |
+| **p5.48xlarge** | NVIDIA H100 80GB | 8 | 32x 100Gbps | NIXL LIBFABRIC RDMA | Yes |
+| **p4d.24xlarge** | NVIDIA A100 40GB | 8 | 4x 100Gbps | NIXL LIBFABRIC RDMA | Compatible |
+| **g6e.xlarge+** | NVIDIA L40S 48GB | 1-8 | None | TCP / vLLM connector | Yes — vLLM backend |
+| **g5.xlarge+** | NVIDIA A10G 24GB | 1-8 | None | TCP / vLLM connector | Compatible |
+
+### Instance-Specific Environment Variables
+
+**P5/P5en (EFA RDMA):**
+```bash
+NIXL_BACKEND=LIBFABRIC
+FI_PROVIDER=efa
+FI_EFA_USE_DEVICE_RDMA=1
+FI_EFA_ENABLE_SHM_TRANSFER=0
+NIXL_SKIP_TOPOLOGY_CHECK=1
+```
+
+**G5/G6E (no EFA):**
+```bash
+# No EFA variables needed — Dynamo falls back to TCP/vLLM connector
+# Use vLLM backend (python3 -m dynamo.vllm) for best performance
+```
+
+### Choosing a Backend
+
+| Backend | Best For | Command |
+|---------|----------|---------|
+| **TRT-LLM** | Maximum throughput on P5/P5en | `python3 -m dynamo.trtllm` |
+| **vLLM** | Flexibility, any GPU, no TensorRT | `python3 -m dynamo.vllm` |
+| **Combined image** | Both backends available at runtime | Choose at deploy time |
+
 ## Prerequisites
 
 Before deploying these examples, ensure you have:
