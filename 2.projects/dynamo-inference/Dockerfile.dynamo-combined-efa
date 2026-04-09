@@ -215,7 +215,7 @@ ENV CUDA_PATH=/usr/local/cuda \
 RUN --mount=type=cache,target=/root/.cache/uv \
     export UV_CACHE_DIR=/root/.cache/uv UV_HTTP_TIMEOUT=300 UV_HTTP_RETRIES=5 && \
     uv venv /workspace/.venv --python $PYTHON_VERSION && \
-    /workspace/.venv/bin/uv pip install --upgrade meson pybind11 patchelf maturin[patchelf] tomlkit
+    uv pip install --upgrade meson pybind11 patchelf maturin[patchelf] tomlkit --python /workspace/.venv/bin/python
 COPY --from=dynamo_base /bin/uv /bin/uvx /bin/
 ENV VIRTUAL_ENV=/workspace/.venv
 
@@ -333,7 +333,7 @@ RUN --mount=type=cache,target=/root/.cargo/registry \
     mkdir -p ${CARGO_TARGET_DIR} && \
     uv build --wheel --out-dir /opt/dynamo/dist && \
     cd /opt/dynamo/src/lib/bindings/python && \
-    maturin build --release --features "kv-indexer,kv-indexer-runtime" \
+    maturin build --release --features "kv-indexer" \
         --out /opt/dynamo/dist
 
 # gpu_memory_service wheel
@@ -560,6 +560,8 @@ ARG PYTHON_VERSION
 ARG CUDA_VERSION
 ARG EFA_VERSION
 ARG NIXL_REF
+ARG VLLM_REF
+ARG TENSORRTLLM_PIP_WHEEL
 
 WORKDIR /workspace
 ENV VIRTUAL_ENV=/opt/dynamo/venv \
@@ -772,13 +774,13 @@ RUN --mount=type=cache,target=/home/dynamo/.cache/uv,uid=1000,gid=0,mode=0775 \
 # Install gpu_memory_service if wheel exists
 RUN --mount=type=cache,target=/home/dynamo/.cache/uv,uid=1000,gid=0,mode=0775 \
     export UV_CACHE_DIR=/home/dynamo/.cache/uv && \
-    GMS_WHEEL=$(ls /opt/dynamo/wheelhouse/gpu_memory_service*.whl 2>/dev/null | head -1) && \
+    GMS_WHEEL=$(find /opt/dynamo/wheelhouse -maxdepth 1 -name 'gpu_memory_service*.whl' 2>/dev/null | head -1) && \
     if [ -n "$GMS_WHEEL" ]; then uv pip install "$GMS_WHEEL"; fi
 
 # Install kvbm if wheel exists
 RUN --mount=type=cache,target=/home/dynamo/.cache/uv,uid=1000,gid=0,mode=0775 \
     export UV_CACHE_DIR=/home/dynamo/.cache/uv && \
-    KVBM_WHEEL=$(ls /opt/dynamo/wheelhouse/kvbm*.whl 2>/dev/null | head -1) && \
+    KVBM_WHEEL=$(find /opt/dynamo/wheelhouse -maxdepth 1 -name 'kvbm*.whl' 2>/dev/null | head -1) && \
     if [ -n "$KVBM_WHEEL" ]; then uv pip install "$KVBM_WHEEL"; fi
 
 # Git LFS
@@ -859,7 +861,7 @@ RUN chmod g+w ${VIRTUAL_ENV} /workspace /opt/dynamo && \
 RUN <<"EOF" bash -exu
 VENV="/opt/dynamo/venv"
 PIP="${VENV}/bin/pip"
-${PIP} install --quiet --no-deps pip-licenses prettytable 2>/dev/null || true
+uv pip install --python "${VENV}/bin/python" pip-licenses prettytable 2>/dev/null || true
 {
     echo "# Software Bill of Materials (SBOM)"
     echo "# Image: dynamo-full (vLLM + TRT-LLM + EFA)"
@@ -867,7 +869,8 @@ ${PIP} install --quiet --no-deps pip-licenses prettytable 2>/dev/null || true
     echo "#"
     echo "# -- Python packages --"
     ${VENV}/bin/pip-licenses --python "${VENV}/bin/python" --format=csv 2>/dev/null || \
-        ${PIP} list --format=columns 2>/dev/null
+        uv pip list --python "${VENV}/bin/python" 2>/dev/null || \
+        echo "(package list unavailable)"
     echo ""
     echo "# -- System packages --"
     dpkg-query -W -f='${Package},${Version},unknown\n' 2>/dev/null || true
@@ -881,7 +884,7 @@ ${PIP} install --quiet --no-deps pip-licenses prettytable 2>/dev/null || true
         --format=plain-vertical --with-license-file --no-license-path \
         2>/dev/null || echo "(pip-licenses unavailable)"
 } > /THIRD-PARTY-LICENSES
-${PIP} uninstall --quiet -y pip-licenses 2>/dev/null || true
+uv pip uninstall --python "${VENV}/bin/python" pip-licenses 2>/dev/null || true
 echo "SBOM: $(wc -l < /SBOM.txt) lines"
 EOF
 
