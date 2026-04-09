@@ -610,6 +610,7 @@ ENV PATH=/usr/local/bin/etcd/:/usr/local/cuda/nvvm/bin:/opt/hpcx/ompi/bin:$PATH
 
 # ---- System packages ----
 RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
+    apt-get update && apt-get install -y --no-install-recommends curl && \
     curl -fsSL --retry 5 --retry-delay 3 \
         https://developer.download.nvidia.com/compute/cuda/repos/ubuntu2404/x86_64/cuda-archive-keyring.gpg \
         -o /usr/share/keyrings/cuda-archive-keyring.gpg && \
@@ -620,7 +621,7 @@ RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
     DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
         build-essential g++ ninja-build git git-lfs gnupg2 \
         python${PYTHON_VERSION}-dev python3-pip \
-        jq curl \
+        jq \
         libcudnn9-cuda-13 libnvshmem3-cuda-13 \
         libzmq3-dev \
         ibverbs-providers ibverbs-utils libibumad3 libibverbs1 \
