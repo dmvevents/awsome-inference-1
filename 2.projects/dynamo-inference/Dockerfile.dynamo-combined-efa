@@ -599,6 +599,17 @@ ENV LD_LIBRARY_PATH="/opt/hpcx/ucc/lib:${LD_LIBRARY_PATH:-}" \
 # cusparseLt from PyTorch base
 COPY --from=pytorch_base /usr/local/cuda/lib64/libcusparseLt* /usr/local/cuda/lib64/
 
+# Intel MKL libraries (required by numpy/scipy/torch from NGC PyTorch)
+RUN --mount=type=bind,from=pytorch_base,source=/usr/local/lib,target=/mnt/pytorch_lib \
+    mkdir -p /usr/local/lib && \
+    cp /mnt/pytorch_lib/libmkl_*.so* /usr/local/lib/ 2>/dev/null; \
+    cp /mnt/pytorch_lib/libiomp5.so* /usr/local/lib/ 2>/dev/null; \
+    ldconfig || true
+RUN --mount=type=bind,from=pytorch_base,source=/usr/lib,target=/mnt/pytorch_usrlib \
+    cp /mnt/pytorch_usrlib/x86_64-linux-gnu/libmkl_*.so* /usr/local/lib/ 2>/dev/null; \
+    cp /mnt/pytorch_usrlib/x86_64-linux-gnu/libiomp5.so* /usr/local/lib/ 2>/dev/null; \
+    ldconfig || true
+
 # NUMA library
 RUN --mount=type=bind,from=pytorch_base,source=/usr/lib,target=/mnt/usr_lib \
     mkdir -p /usr/lib/x86_64-linux-gnu && \
