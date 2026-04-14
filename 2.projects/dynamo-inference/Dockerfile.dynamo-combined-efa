@@ -740,6 +740,36 @@ ENV NVIDIA_DRIVER_CAPABILITIES=video,compute,utility
 # ---- Merge TRT-LLM venv as the base (it has PyTorch from NGC) ----
 COPY --chmod=775 --chown=dynamo:0 --from=trtllm_framework ${VIRTUAL_ENV} ${VIRTUAL_ENV}
 
+# ---- Expose system CUDA libs to TRT-LLM's sys.path-based library finder ----
+# TRT-LLM searches sys.path (Python dirs) for libs like libcublas.so, not LD_LIBRARY_PATH.
+# Create a nvidia/cublas/lib/ tree under site-packages to mimic the pip nvidia-cublas-cu12 layout.
+RUN SITE_DIR=${VIRTUAL_ENV}/lib/python${PYTHON_VERSION}/site-packages && \
+    mkdir -p ${SITE_DIR}/nvidia/cublas/lib \
+             ${SITE_DIR}/nvidia/cuda_runtime/lib \
+             ${SITE_DIR}/nvidia/cudnn/lib \
+             ${SITE_DIR}/nvidia/nccl/lib \
+             ${SITE_DIR}/nvidia/curand/lib \
+             ${SITE_DIR}/nvidia/cusolver/lib \
+             ${SITE_DIR}/nvidia/cusparse/lib \
+             ${SITE_DIR}/nvidia/cufft/lib \
+             ${SITE_DIR}/nvidia/nvjitlink/lib && \
+    ln -sf /usr/local/cuda/lib64/libcublas.so* ${SITE_DIR}/nvidia/cublas/lib/ && \
+    ln -sf /usr/local/cuda/lib64/libcublasLt.so* ${SITE_DIR}/nvidia/cublas/lib/ && \
+    ln -sf /usr/local/cuda/lib64/libcudart.so* ${SITE_DIR}/nvidia/cuda_runtime/lib/ && \
+    ln -sf /usr/local/cuda/lib64/libcurand.so* ${SITE_DIR}/nvidia/curand/lib/ && \
+    ln -sf /usr/local/cuda/lib64/libcusolver.so* ${SITE_DIR}/nvidia/cusolver/lib/ && \
+    ln -sf /usr/local/cuda/lib64/libcusparse.so* ${SITE_DIR}/nvidia/cusparse/lib/ && \
+    ln -sf /usr/local/cuda/lib64/libcufft.so* ${SITE_DIR}/nvidia/cufft/lib/ && \
+    ln -sf /usr/local/cuda/lib64/libnvJitLink.so* ${SITE_DIR}/nvidia/nvjitlink/lib/ && \
+    for f in /usr/lib/x86_64-linux-gnu/libcudnn*.so*; do \
+        [ -e "$f" ] && ln -sf "$f" ${SITE_DIR}/nvidia/cudnn/lib/; \
+    done && \
+    for f in /usr/lib/x86_64-linux-gnu/libnccl*.so*; do \
+        [ -e "$f" ] && ln -sf "$f" ${SITE_DIR}/nvidia/nccl/lib/; \
+    done && \
+    echo 'CUDA libs symlinked into site-packages for TRT-LLM discovery'
+
+
 # ---- Overlay vLLM packages on top ----
 # Copy only vLLM-specific site-packages that do not conflict with TRT-LLM's PyTorch.
 # vLLM and TRT-LLM share the same PyTorch from NGC, so we only need vLLM's own packages.
