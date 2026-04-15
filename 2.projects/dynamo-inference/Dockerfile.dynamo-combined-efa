@@ -752,7 +752,8 @@ RUN SITE_DIR=${VIRTUAL_ENV}/lib/python${PYTHON_VERSION}/site-packages && \
              ${SITE_DIR}/nvidia/cusolver/lib \
              ${SITE_DIR}/nvidia/cusparse/lib \
              ${SITE_DIR}/nvidia/cufft/lib \
-             ${SITE_DIR}/nvidia/nvjitlink/lib && \
+             ${SITE_DIR}/nvidia/nvjitlink/lib \
+             ${SITE_DIR}/nvidia/cuda_cupti/lib && \
     ln -sf /usr/local/cuda/lib64/libcublas.so* ${SITE_DIR}/nvidia/cublas/lib/ && \
     ln -sf /usr/local/cuda/lib64/libcublasLt.so* ${SITE_DIR}/nvidia/cublas/lib/ && \
     ln -sf /usr/local/cuda/lib64/libcudart.so* ${SITE_DIR}/nvidia/cuda_runtime/lib/ && \
@@ -761,6 +762,8 @@ RUN SITE_DIR=${VIRTUAL_ENV}/lib/python${PYTHON_VERSION}/site-packages && \
     ln -sf /usr/local/cuda/lib64/libcusparse.so* ${SITE_DIR}/nvidia/cusparse/lib/ && \
     ln -sf /usr/local/cuda/lib64/libcufft.so* ${SITE_DIR}/nvidia/cufft/lib/ && \
     ln -sf /usr/local/cuda/lib64/libnvJitLink.so* ${SITE_DIR}/nvidia/nvjitlink/lib/ && \
+    ln -sf /usr/local/cuda/lib64/libcupti.so* ${SITE_DIR}/nvidia/cuda_cupti/lib/ && \
+    ln -sf /usr/local/cuda/extras/CUPTI/lib64/libcupti.so* ${SITE_DIR}/nvidia/cuda_cupti/lib/ 2>/dev/null; \
     for f in /usr/lib/x86_64-linux-gnu/libcudnn*.so*; do \
         [ -e "$f" ] && ln -sf "$f" ${SITE_DIR}/nvidia/cudnn/lib/; \
     done && \
@@ -768,7 +771,6 @@ RUN SITE_DIR=${VIRTUAL_ENV}/lib/python${PYTHON_VERSION}/site-packages && \
         [ -e "$f" ] && ln -sf "$f" ${SITE_DIR}/nvidia/nccl/lib/; \
     done && \
     echo 'CUDA libs symlinked into site-packages for TRT-LLM discovery'
-
 
 # ---- Overlay vLLM packages on top ----
 # Copy only vLLM-specific site-packages that do not conflict with TRT-LLM's PyTorch.
