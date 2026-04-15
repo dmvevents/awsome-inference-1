@@ -754,7 +754,8 @@ RUN SITE_DIR=${VIRTUAL_ENV}/lib/python${PYTHON_VERSION}/site-packages && \
              ${SITE_DIR}/nvidia/cufft/lib \
              ${SITE_DIR}/nvidia/nvjitlink/lib \
              ${SITE_DIR}/nvidia/cuda_cupti/lib \
-             ${SITE_DIR}/nvidia/cusparselt/lib && \
+             ${SITE_DIR}/nvidia/cusparselt/lib \
+             ${SITE_DIR}/nvidia/nvshmem/lib && \
     ln -sf /usr/local/cuda/lib64/libcublas.so* ${SITE_DIR}/nvidia/cublas/lib/ && \
     ln -sf /usr/local/cuda/lib64/libcublasLt.so* ${SITE_DIR}/nvidia/cublas/lib/ && \
     ln -sf /usr/local/cuda/lib64/libcudart.so* ${SITE_DIR}/nvidia/cuda_runtime/lib/ && \
@@ -766,6 +767,7 @@ RUN SITE_DIR=${VIRTUAL_ENV}/lib/python${PYTHON_VERSION}/site-packages && \
     ln -sf /usr/local/cuda/lib64/libcupti.so* ${SITE_DIR}/nvidia/cuda_cupti/lib/ && \
     ln -sf /usr/local/cuda/extras/CUPTI/lib64/libcupti.so* ${SITE_DIR}/nvidia/cuda_cupti/lib/ 2>/dev/null; \
     ln -sf /usr/local/cuda/lib64/libcusparseLt.so* ${SITE_DIR}/nvidia/cusparselt/lib/ && \
+    ln -sf /usr/lib/x86_64-linux-gnu/nvshmem/13/libnvshmem*.so* ${SITE_DIR}/nvidia/nvshmem/lib/ && \
     for f in /usr/lib/x86_64-linux-gnu/libcudnn*.so*; do \
         [ -e "$f" ] && ln -sf "$f" ${SITE_DIR}/nvidia/cudnn/lib/; \
     done && \
