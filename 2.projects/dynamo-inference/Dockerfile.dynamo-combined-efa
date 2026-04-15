@@ -576,6 +576,12 @@ COPY --from=dynamo_base /usr/local/cuda/lib64/ /usr/local/cuda/lib64/
 COPY --from=dynamo_base /usr/local/cuda/include/ /usr/local/cuda/include/
 COPY --from=dynamo_base /usr/local/cuda/nvvm/ /usr/local/cuda/nvvm/
 
+# CUDA math libs (cublas, cusolver, etc.) live under /usr/lib on modern NVIDIA images
+RUN --mount=type=bind,from=dynamo_base,source=/usr/lib/x86_64-linux-gnu,target=/mnt/devel_libs \
+    for pattern in libcublas libcublasLt libcusolver libcusparse libcufft libcurand; do \
+        find /mnt/devel_libs -maxdepth 1 -name "${pattern}*.so*" -exec cp -aL {} /usr/local/cuda/lib64/ \; 2>/dev/null || true; \
+    done && ldconfig
+
 # CUDA symlinks
 RUN CUDA_MAJOR="${CUDA_VERSION%%.*}" && \
     ln -sf /usr/local/cuda/lib64/libcublas.so.${CUDA_MAJOR} /usr/local/cuda/lib64/libcublas.so && \
@@ -917,7 +923,7 @@ RUN set -e && \
             find "$dir" -maxdepth 1 -name '*.so*' -exec ln -sf {} ${LIB_DIR}/ \; 2>/dev/null || true; \
         fi; \
     done && \
-    for pattern in libcudnn libnccl libnvrtc libcufile; do \
+    for pattern in libcublas libcublasLt libcudnn libnccl libnvrtc libcufile; do \
         find /usr/lib/x86_64-linux-gnu -maxdepth 1 -name "${pattern}*.so*" -exec ln -sf {} ${LIB_DIR}/ \; 2>/dev/null || true; \
     done && \
     echo "Symlinked $(find ${LIB_DIR} -name '*.so*' | wc -l) NVIDIA libs" && \
