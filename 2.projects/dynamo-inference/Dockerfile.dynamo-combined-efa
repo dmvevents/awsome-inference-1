@@ -744,7 +744,8 @@ COPY --chmod=775 --chown=dynamo:0 --from=trtllm_framework ${VIRTUAL_ENV} ${VIRTU
 # TRT-LLM searches sys.path (Python dirs) for .so files, not LD_LIBRARY_PATH.
 # Instead of whack-a-mole per library, create a single nvidia/_system_libs/lib/ dir
 # under site-packages and symlink every NVIDIA .so from all known locations.
-RUN SITE_DIR=${VIRTUAL_ENV}/lib/python${PYTHON_VERSION}/site-packages && \
+RUN set -e && \
+    SITE_DIR=${VIRTUAL_ENV}/lib/python${PYTHON_VERSION}/site-packages && \
     LIB_DIR=${SITE_DIR}/nvidia/_system_libs/lib && \
     mkdir -p ${LIB_DIR} && \
     for dir in \
@@ -754,14 +755,14 @@ RUN SITE_DIR=${VIRTUAL_ENV}/lib/python${PYTHON_VERSION}/site-packages && \
         /usr/local/tensorrt/targets/x86_64-linux-gnu/lib \
         /usr/lib/x86_64-linux-gnu/nvshmem/13 \
     ; do \
-        [ -d "$dir" ] && ln -sf "$dir"/*.so* ${LIB_DIR}/ 2>/dev/null || true; \
+        if [ -d "$dir" ]; then \
+            find "$dir" -maxdepth 1 -name '*.so*' -exec ln -sf {} ${LIB_DIR}/ \; 2>/dev/null || true; \
+        fi; \
     done && \
     for pattern in libcudnn libnccl libnvrtc libcufile; do \
-        for f in /usr/lib/x86_64-linux-gnu/${pattern}*.so*; do \
-            [ -e "$f" ] && ln -sf "$f" ${LIB_DIR}/; \
-        done; \
+        find /usr/lib/x86_64-linux-gnu -maxdepth 1 -name "${pattern}*.so*" -exec ln -sf {} ${LIB_DIR}/ \; 2>/dev/null || true; \
     done && \
-    ls ${LIB_DIR}/*.so* | wc -l | xargs -I{} echo 'Symlinked {} NVIDIA libs into site-packages for TRT-LLM discovery'
+    echo "Symlinked $(find ${LIB_DIR} -name '*.so*' | wc -l) NVIDIA libs into site-packages for TRT-LLM discovery"
 
 # ---- Overlay vLLM packages on top ----
 # Copy only vLLM-specific site-packages that do not conflict with TRT-LLM's PyTorch.
