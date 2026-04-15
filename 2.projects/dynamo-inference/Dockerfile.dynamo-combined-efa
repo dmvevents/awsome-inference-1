@@ -740,30 +740,6 @@ ENV NVIDIA_DRIVER_CAPABILITIES=video,compute,utility
 # ---- Merge TRT-LLM venv as the base (it has PyTorch from NGC) ----
 COPY --chmod=775 --chown=dynamo:0 --from=trtllm_framework ${VIRTUAL_ENV} ${VIRTUAL_ENV}
 
-# ---- Expose ALL system CUDA/NVIDIA libs to TRT-LLM's sys.path-based library finder ----
-# TRT-LLM searches sys.path (Python dirs) for .so files, not LD_LIBRARY_PATH.
-# Instead of whack-a-mole per library, create a single nvidia/_system_libs/lib/ dir
-# under site-packages and symlink every NVIDIA .so from all known locations.
-RUN set -e && \
-    SITE_DIR=${VIRTUAL_ENV}/lib/python${PYTHON_VERSION}/site-packages && \
-    LIB_DIR=${SITE_DIR}/nvidia/_system_libs/lib && \
-    mkdir -p ${LIB_DIR} && \
-    for dir in \
-        /usr/local/cuda/lib64 \
-        /usr/local/cuda/extras/CUPTI/lib64 \
-        /usr/local/cuda/lib \
-        /usr/local/tensorrt/targets/x86_64-linux-gnu/lib \
-        /usr/lib/x86_64-linux-gnu/nvshmem/13 \
-    ; do \
-        if [ -d "$dir" ]; then \
-            find "$dir" -maxdepth 1 -name '*.so*' -exec ln -sf {} ${LIB_DIR}/ \; 2>/dev/null || true; \
-        fi; \
-    done && \
-    for pattern in libcudnn libnccl libnvrtc libcufile; do \
-        find /usr/lib/x86_64-linux-gnu -maxdepth 1 -name "${pattern}*.so*" -exec ln -sf {} ${LIB_DIR}/ \; 2>/dev/null || true; \
-    done && \
-    echo "Symlinked $(find ${LIB_DIR} -name '*.so*' | wc -l) NVIDIA libs into site-packages for TRT-LLM discovery"
-
 # ---- Overlay vLLM packages on top ----
 # Copy only vLLM-specific site-packages that do not conflict with TRT-LLM's PyTorch.
 # vLLM and TRT-LLM share the same PyTorch from NGC, so we only need vLLM's own packages.
@@ -922,6 +898,30 @@ uv pip install --python "${VENV}/bin/python" pip-licenses prettytable 2>/dev/nul
 uv pip uninstall --python "${VENV}/bin/python" pip-licenses 2>/dev/null || true
 echo "SBOM: $(wc -l < /SBOM.txt) lines"
 EOF
+
+# ---- Expose ALL system CUDA/NVIDIA libs to TRT-LLM's sys.path-based library finder ----
+# This MUST be the last RUN to avoid pip/uv installs clobbering it.
+# TRT-LLM walks nvidia/*/lib/ dirs under each sys.path entry looking for .so files.
+RUN set -e && \
+    SITE_DIR=${VIRTUAL_ENV}/lib/python${PYTHON_VERSION}/site-packages && \
+    LIB_DIR=${SITE_DIR}/nvidia/_system_libs/lib && \
+    mkdir -p ${LIB_DIR} && \
+    for dir in \
+        /usr/local/cuda/lib64 \
+        /usr/local/cuda/extras/CUPTI/lib64 \
+        /usr/local/cuda/lib \
+        /usr/local/tensorrt/targets/x86_64-linux-gnu/lib \
+        /usr/lib/x86_64-linux-gnu/nvshmem/13 \
+    ; do \
+        if [ -d "$dir" ]; then \
+            find "$dir" -maxdepth 1 -name '*.so*' -exec ln -sf {} ${LIB_DIR}/ \; 2>/dev/null || true; \
+        fi; \
+    done && \
+    for pattern in libcudnn libnccl libnvrtc libcufile; do \
+        find /usr/lib/x86_64-linux-gnu -maxdepth 1 -name "${pattern}*.so*" -exec ln -sf {} ${LIB_DIR}/ \; 2>/dev/null || true; \
+    done && \
+    echo "Symlinked $(find ${LIB_DIR} -name '*.so*' | wc -l) NVIDIA libs" && \
+    ls ${LIB_DIR}/libcublas.so* && echo "libcublas: OK"
 
 # ---- Labels ----
 LABEL maintainer="nemo-rl" \
