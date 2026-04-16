@@ -162,7 +162,7 @@ WORKDIR /workspace
 
 # Copy CUDA from base stage
 COPY --from=dynamo_base /usr/local/cuda /usr/local/cuda
-COPY --from=dynamo_base /etc/ld.so.conf.d/hpcx.conf /etc/ld.so.conf.d/hpcx.conf
+# HPC-X ldconfig removed — using Amazon OpenMPI instead
 
 # Rust from base
 ENV CARGO_BUILD_JOBS=${CARGO_BUILD_JOBS} \
@@ -515,6 +515,7 @@ RUN VLLM_VER="${VLLM_REF#v}" && \
         --extra-index-url "https://flashinfer.ai/whl/${TORCH_BACKEND}" && \
     echo "vLLM ${VLLM_VER} installed"
 
+
 # LMCache (build from source for PyTorch 2.10+ compat)
 RUN VLLM_VER="${VLLM_REF#v}" && \
     if [ -n "${LMCACHE_REF}" ]; then \
@@ -576,11 +577,15 @@ COPY --from=dynamo_base /usr/local/cuda/lib64/ /usr/local/cuda/lib64/
 COPY --from=dynamo_base /usr/local/cuda/include/ /usr/local/cuda/include/
 COPY --from=dynamo_base /usr/local/cuda/nvvm/ /usr/local/cuda/nvvm/
 
-# CUDA math libs (cublas, cusolver, etc.) live under /usr/lib on modern NVIDIA images
-RUN --mount=type=bind,from=dynamo_base,source=/usr/lib/x86_64-linux-gnu,target=/mnt/devel_libs \
-    for pattern in libcublas libcublasLt libcusolver libcusparse libcufft libcurand; do \
-        find /mnt/devel_libs -maxdepth 1 -name "${pattern}*.so*" -exec cp -aL {} /usr/local/cuda/lib64/ \; 2>/dev/null || true; \
-    done && ldconfig
+# Ensure cublas is present — copy from devel image's resolved target path
+# Docker COPY may not follow all symlink chains correctly for /usr/local/cuda/lib64/
+RUN --mount=type=bind,from=dynamo_base,source=/usr/local/cuda-12.9/targets/x86_64-linux/lib,target=/mnt/cuda_libs \
+    for pattern in libcublas libcublasLt; do \
+        find /mnt/cuda_libs -maxdepth 1 -name "${pattern}*.so*" ! -path '*/stubs/*' -exec cp -L {} /usr/local/cuda/lib64/ \; 2>/dev/null || true; \
+    done && \
+    ldconfig && \
+    echo "cublas files:" && ls -la /usr/local/cuda/lib64/libcublas* && \
+    echo "cublas: OK"
 
 # CUDA symlinks
 RUN CUDA_MAJOR="${CUDA_VERSION%%.*}" && \
@@ -597,10 +602,11 @@ ENV CUDA_HOME=/usr/local/cuda \
     TRITON_CUDART_PATH=/usr/local/cuda/include \
     CUDA_DEVICE_ORDER=PCI_BUS_ID
 
-# ---- OpenMPI + HPC-X from NGC PyTorch ----
-COPY --from=pytorch_base /opt/hpcx /opt/hpcx
-ENV LD_LIBRARY_PATH="/opt/hpcx/ucc/lib:${LD_LIBRARY_PATH:-}" \
-    OPAL_PREFIX=/opt/hpcx/ompi
+# ---- UCC library (needed by torch) — extracted from HPC-X, no full HPC-X install ----
+COPY --from=pytorch_base /opt/hpcx/ucc/lib/libucc.so.1.0.0 /usr/local/lib/libucc.so.1.0.0
+RUN ln -sf libucc.so.1.0.0 /usr/local/lib/libucc.so.1 && \
+    ln -sf libucc.so.1 /usr/local/lib/libucc.so && \
+    ldconfig
 
 # cusparseLt from PyTorch base
 COPY --from=pytorch_base /usr/local/cuda/lib64/libcusparseLt* /usr/local/cuda/lib64/
@@ -625,7 +631,7 @@ RUN --mount=type=bind,from=pytorch_base,source=/usr/lib,target=/mnt/usr_lib \
 COPY --from=dynamo_base /usr/bin/nats-server /usr/bin/nats-server
 COPY --from=dynamo_base /usr/local/bin/etcd/ /usr/local/bin/etcd/
 COPY --from=dynamo_base /bin/uv /bin/uvx /bin/
-ENV PATH=/usr/local/bin/etcd/:/usr/local/cuda/nvvm/bin:/opt/hpcx/ompi/bin:$PATH
+ENV PATH=/usr/local/bin/etcd/:/usr/local/cuda/nvvm/bin:/opt/amazon/openmpi/bin:$PATH
 
 # ---- System packages ----
 RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
@@ -732,7 +738,7 @@ ${NIXL_PLUGIN_DIR}:\
 /usr/local/ucx/lib:\
 /usr/local/ucx/lib/ucx:\
 /usr/local/libfabric/lib:\
-/opt/hpcx/ompi/lib:\
+/opt/amazon/openmpi/lib:\
 /usr/local/tensorrt/targets/x86_64-linux-gnu/lib:\
 /usr/lib/x86_64-linux-gnu/nvshmem/13/:\
 /opt/dynamo/venv/lib/python${PYTHON_VERSION}/site-packages/torch/lib:\
@@ -807,9 +813,12 @@ RUN git lfs install
 # These are installed last so the resolver sees all constraints together
 RUN --mount=type=cache,target=/home/dynamo/.cache/uv,uid=1000,gid=0,mode=0775 \
     export UV_CACHE_DIR=/home/dynamo/.cache/uv UV_GIT_LFS=1 UV_HTTP_TIMEOUT=300 UV_HTTP_RETRIES=5 && \
+    # Record the current torch version (from trtllm) to prevent uv from upgrading it
+    TORCH_VER=$(/opt/dynamo/venv/bin/python -c 'import torch; print(torch.__version__)') && \
     uv pip install --no-cache \
         --index-strategy unsafe-best-match \
         --extra-index-url https://download.pytorch.org/whl/cu129 \
+        "torch==${TORCH_VER}" \
         fastapi==0.120.1 \
         "grpcio-tools<=1.76.0" \
         httpx==0.28.1 \
@@ -869,6 +878,7 @@ ENV FI_PROVIDER=efa \
     NCCL_NET_PLUGIN=ofi \
     NCCL_SOCKET_IFNAME="^lo,docker,veth,eni"
 
+
 # ---- Fix permissions ----
 RUN chmod g+w ${VIRTUAL_ENV} /workspace /opt/dynamo && \
     chown dynamo:0 ${VIRTUAL_ENV} /workspace /opt/dynamo && \
@@ -905,29 +915,125 @@ uv pip uninstall --python "${VENV}/bin/python" pip-licenses 2>/dev/null || true
 echo "SBOM: $(wc -l < /SBOM.txt) lines"
 EOF
 
-# ---- Expose ALL system CUDA/NVIDIA libs to TRT-LLM's sys.path-based library finder ----
-# This MUST be the last RUN to avoid pip/uv installs clobbering it.
-# TRT-LLM walks nvidia/*/lib/ dirs under each sys.path entry looking for .so files.
+# ---- Expose system CUDA/NVIDIA libs to PyTorch's sys.path-based library finder ----
+# PyTorch searches nvidia/{folder}/lib/ under each sys.path entry.
+# The folder names MUST match the keys in torch/__init__.py's cuda_libs dict:
+#   cublas, cudnn, cuda_nvrtc, cuda_runtime, cuda_cupti, cufft, curand,
+#   nvjitlink, cusparse, cusparselt, cusolver, nccl, nvshmem, cufile
+# TRT-LLM also walks nvidia/*/lib/ dirs.
 RUN set -e && \
     SITE_DIR=${VIRTUAL_ENV}/lib/python${PYTHON_VERSION}/site-packages && \
-    LIB_DIR=${SITE_DIR}/nvidia/_system_libs/lib && \
-    mkdir -p ${LIB_DIR} && \
+    NVIDIA_DIR=${SITE_DIR}/nvidia && \
+    # Also keep the catch-all _system_libs for TRT-LLM
+    LEGACY_DIR=${NVIDIA_DIR}/_system_libs/lib && \
+    mkdir -p ${LEGACY_DIR} && \
+    # Collect all system .so files into _system_libs
     for dir in \
         /usr/local/cuda/lib64 \
+        /usr/local/cuda/targets/x86_64-linux/lib \
         /usr/local/cuda/extras/CUPTI/lib64 \
         /usr/local/cuda/lib \
         /usr/local/tensorrt/targets/x86_64-linux-gnu/lib \
         /usr/lib/x86_64-linux-gnu/nvshmem/13 \
     ; do \
         if [ -d "$dir" ]; then \
-            find "$dir" -maxdepth 1 -name '*.so*' -exec ln -sf {} ${LIB_DIR}/ \; 2>/dev/null || true; \
+            find -L "$dir" -maxdepth 1 -name '*.so*' -exec ln -sf {} ${LEGACY_DIR}/ \; 2>/dev/null || true; \
         fi; \
     done && \
-    for pattern in libcublas libcublasLt libcudnn libnccl libnvrtc libcufile; do \
-        find /usr/lib/x86_64-linux-gnu -maxdepth 1 -name "${pattern}*.so*" -exec ln -sf {} ${LIB_DIR}/ \; 2>/dev/null || true; \
+    # Now create PyTorch-compatible nvidia/{name}/lib/ directories
+    # by symlinking from existing nvidia pip packages OR from _system_libs
+    for folder in cublas cudnn cuda_nvrtc cuda_runtime cuda_cupti cufft curand nvjitlink cusparse cusparselt cusolver nccl nvshmem cufile; do \
+        target_dir=${NVIDIA_DIR}/${folder}/lib; \
+        if [ ! -d "$target_dir" ]; then \
+            mkdir -p "$target_dir"; \
+        fi; \
     done && \
-    echo "Symlinked $(find ${LIB_DIR} -name '*.so*' | wc -l) NVIDIA libs" && \
-    ls ${LIB_DIR}/libcublas.so* && echo "libcublas: OK"
+    # Symlink cublas from system into nvidia/cublas/lib/
+    for f in /usr/local/cuda/targets/x86_64-linux/lib/libcublas*.so* /usr/local/cuda/targets/x86_64-linux/lib/libcublasLt*.so*; do \
+        [ -e "$f" ] && ln -sf "$f" ${NVIDIA_DIR}/cublas/lib/ 2>/dev/null || true; \
+    done && \
+    # Symlink cudart from cu13 (TRT-LLM installed) or system into nvidia/cuda_runtime/lib/
+    if [ -d "${NVIDIA_DIR}/cu13/lib" ]; then \
+        for f in ${NVIDIA_DIR}/cu13/lib/libcudart.so*; do \
+            [ -e "$f" ] && ln -sf "$f" ${NVIDIA_DIR}/cuda_runtime/lib/ 2>/dev/null || true; \
+        done; \
+    fi && \
+    for f in /usr/local/cuda/targets/x86_64-linux/lib/libcudart.so*; do \
+        [ -e "$f" ] && ln -sf "$f" ${NVIDIA_DIR}/cuda_runtime/lib/ 2>/dev/null || true; \
+    done && \
+    # Symlink nvrtc from cu13 or system
+    if [ -d "${NVIDIA_DIR}/cu13/lib" ]; then \
+        for f in ${NVIDIA_DIR}/cu13/lib/libnvrtc*.so*; do \
+            [ -e "$f" ] && ln -sf "$f" ${NVIDIA_DIR}/cuda_nvrtc/lib/ 2>/dev/null || true; \
+        done; \
+    fi && \
+    # Symlink remaining libs from system paths into their respective dirs
+    for f in /usr/local/cuda/targets/x86_64-linux/lib/libnvrtc*.so*; do [ -e "$f" ] && ln -sf "$f" ${NVIDIA_DIR}/cuda_nvrtc/lib/ 2>/dev/null || true; done && \
+    for f in /usr/local/cuda/extras/CUPTI/lib64/libcupti*.so* /usr/local/cuda/targets/x86_64-linux/lib/libcupti*.so*; do [ -e "$f" ] && ln -sf "$f" ${NVIDIA_DIR}/cuda_cupti/lib/ 2>/dev/null || true; done && \
+    for f in /usr/local/cuda/targets/x86_64-linux/lib/libcufft*.so*; do [ -e "$f" ] && ln -sf "$f" ${NVIDIA_DIR}/cufft/lib/ 2>/dev/null || true; done && \
+    for f in /usr/local/cuda/targets/x86_64-linux/lib/libcurand*.so*; do [ -e "$f" ] && ln -sf "$f" ${NVIDIA_DIR}/curand/lib/ 2>/dev/null || true; done && \
+    for f in /usr/local/cuda/targets/x86_64-linux/lib/libnvJitLink*.so*; do [ -e "$f" ] && ln -sf "$f" ${NVIDIA_DIR}/nvjitlink/lib/ 2>/dev/null || true; done && \
+    for f in /usr/local/cuda/targets/x86_64-linux/lib/libcusparse*.so*; do [ -e "$f" ] && ln -sf "$f" ${NVIDIA_DIR}/cusparse/lib/ 2>/dev/null || true; done && \
+    for f in /usr/local/cuda/targets/x86_64-linux/lib/libcusparseLt*.so*; do [ -e "$f" ] && ln -sf "$f" ${NVIDIA_DIR}/cusparselt/lib/ 2>/dev/null || true; done && \
+    for f in /usr/local/cuda/targets/x86_64-linux/lib/libcusolver*.so*; do [ -e "$f" ] && ln -sf "$f" ${NVIDIA_DIR}/cusolver/lib/ 2>/dev/null || true; done && \
+    for f in /usr/lib/x86_64-linux-gnu/libnccl*.so*; do [ -e "$f" ] && ln -sf "$f" ${NVIDIA_DIR}/nccl/lib/ 2>/dev/null || true; done && \
+    find /usr/lib/x86_64-linux-gnu -maxdepth 1 -name 'libcudnn.so' -o -name 'libcudnn.so.[0-9]' | while read f; do ln -sf "$f" ${NVIDIA_DIR}/cudnn/lib/ 2>/dev/null || true; done && \
+    for f in /usr/local/cuda/targets/x86_64-linux/lib/libcufile*.so*; do [ -e "$f" ] && ln -sf "$f" ${NVIDIA_DIR}/cufile/lib/ 2>/dev/null || true; done && \
+    # nvshmem from system path
+    for f in /usr/lib/x86_64-linux-gnu/nvshmem/13/libnvshmem*.so*; do [ -e "$f" ] && ln -sf "$f" ${NVIDIA_DIR}/nvshmem/lib/ 2>/dev/null || true; done && \
+    echo "=== PyTorch CUDA lib directories ==" && \
+    for d in cublas cuda_runtime cuda_nvrtc; do echo "$d:"; ls ${NVIDIA_DIR}/$d/lib/ 2>&1 | head -5; done && \
+    echo "Symlinked $(find ${LEGACY_DIR} -name '*.so*' | wc -l) libs in _system_libs" && \
+    echo "libcublas: $(ls ${NVIDIA_DIR}/cublas/lib/libcublas.so* 2>/dev/null | wc -l) files" && \
+    echo "libcudart: $(ls ${NVIDIA_DIR}/cuda_runtime/lib/libcudart.so* 2>/dev/null | wc -l) files" && \
+    ls ${NVIDIA_DIR}/cublas/lib/libcublas.so* && echo "libcublas: OK" && \
+    # Register all nvidia pip package lib dirs with the system linker
+    # PyTorch _preload_cuda_deps uses ctypes (works with sys.path), but
+    # torch._C native extension uses the system linker which needs ldconfig
+    find ${NVIDIA_DIR} -maxdepth 2 -name lib -type d > /etc/ld.so.conf.d/nvidia-venv.conf && \
+    echo '/usr/local/cuda/targets/x86_64-linux/lib' >> /etc/ld.so.conf.d/nvidia-venv.conf && \
+    echo '/usr/lib/x86_64-linux-gnu' >> /etc/ld.so.conf.d/nvidia-venv.conf && \
+    # Use REAL CUDA 13 libs. TRT-LLM's PyTorch was built against CUDA 13.
+    # Install CUDA 13 runtime packages (the CUDA repo was already configured above).
+    apt-get update -qq && \
+    DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
+        cuda-cudart-13-1 libcublas-13-1 libcufft-13-1 libcurand-13-1 \
+        libcusparse-13-1 libcusolver-13-1 libnvjitlink-13-1 \
+        cuda-cupti-13-1 2>/dev/null || \
+    DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
+        cuda-cudart-13-0 libcublas-13-0 libcufft-13-0 libcurand-13-0 \
+        libcusparse-13-0 libcusolver-13-0 libnvjitlink-13-0 \
+        cuda-cupti-13-0 2>/dev/null || \
+    echo 'WARN: CUDA 13 packages not available, trying compat symlinks' && \
+    ldconfig && \
+    # Validate torch can actually import (catches any remaining missing libs)
+    ${VIRTUAL_ENV}/bin/python -c 'import torch; print(f"torch {torch.__version__} CUDA {torch.version.cuda} OK")' && \
+    echo "=== PyTorch import: OK ==="
+
+# ---- Dynamo/TRT-LLM compat: TOKENIZER_ALIASES moved from module-level to method-local ----
+RUN WORKER=/opt/dynamo/venv/lib/python3.12/site-packages/dynamo/trtllm/workers/llm_worker.py && \
+    sed -i '/^    TOKENIZER_ALIASES,$/d' "$WORKER" && \
+    sed -i 's/^from tensorrt_llm.llmapi.llm_args import (/from tensorrt_llm.llmapi.llm_args import (/' "$WORKER" && \
+    sed -i '/tokenizer_path = TOKENIZER_ALIASES.get/i\            TOKENIZER_ALIASES = {"deepseek_v32": "tensorrt_llm.tokenizer.deepseek_v32.DeepseekV32Tokenizer"}' "$WORKER" && \
+    echo "Patched TOKENIZER_ALIASES in llm_worker.py"
+
+
+# ---- ABI compat shim: TRT-LLM libth_common.so vs torch libc10_cuda.so ----
+# TRT-LLM expects c10_cuda_check_implementation(..., int, bool)
+# Torch provides c10_cuda_check_implementation(..., unsigned int, bool)
+# Same size/ABI on x86_64, just a signature mismatch.
+RUN printf '%s\n' \
+    'extern "C" {' \
+    '    void _ZN3c104cuda29c10_cuda_check_implementationEiPKcS2_jb(int, const char*, const char*, unsigned int, bool);' \
+    '    void _ZN3c104cuda29c10_cuda_check_implementationEiPKcS2_ib(int a, const char* b, const char* c, int d, bool e) {' \
+    '        _ZN3c104cuda29c10_cuda_check_implementationEiPKcS2_jb(a, b, c, (unsigned int)d, e);' \
+    '    }' \
+    '}' > /tmp/c10_compat.cpp && \
+    g++ -shared -fPIC -o /usr/local/lib/libc10_compat.so /tmp/c10_compat.cpp && \
+    rm /tmp/c10_compat.cpp && \
+    ldconfig && \
+    echo "c10 compat shim built"
+ENV LD_PRELOAD=/usr/local/lib/libc10_compat.so
 
 # ---- Labels ----
 LABEL maintainer="nemo-rl" \
