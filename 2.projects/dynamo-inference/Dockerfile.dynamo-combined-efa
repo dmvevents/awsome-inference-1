@@ -18,9 +18,14 @@
 #   - Inherits official Dynamo runtime images (no from-source rebuild)
 #   - Consistent EFA 1.48.0 / libfabric 2.4.0amzn3.0 / aws-ofi-nccl 1.19.0-1 NGC v1
 #
-# Build:
-#   docker build --build-arg NETWORKING_BASE=networking-base:v5 \
-#       -t dynamo-combined-efa:v1 inference/dynamo-combined-efa/
+# Build (self-contained — no pre-built private image required; CodeBuild works):
+#   docker build -f Dockerfile.dynamo-combined-efa \
+#       -t dynamo-combined-efa:v1 .
+#
+# The default NETWORKING_BASE is public.ecr.aws/v9l4g5s4/networking-base:v5
+# (anonymous pull, ~17 GB). Override if you mirror the base yourself:
+#   docker build --build-arg NETWORKING_BASE=your-registry/networking-base:v5 \
+#       -f Dockerfile.dynamo-combined-efa -t dynamo-combined-efa:v1 .
 #
 # Test distribution (per ticket P416074947):
 #   - g5.8xlarge     ( 1 EFA, A10G)  — basic EFA + single-backend smoke
@@ -28,7 +33,11 @@
 #   - p5en.48xlarge  (16 EFA, H200)  — multi-rail EFA + both backends
 # =============================================================================
 
-ARG NETWORKING_BASE=networking-base:v5
+# networking-base:v5 is published to public.ecr.aws (anonymous pull, no AWS
+# auth needed). If you are building inside an AWS account, CodeBuild etc.
+# already has pull access to public.ecr.aws. If you want to override with
+# your own mirror, pass --build-arg NETWORKING_BASE=your-registry/your-base.
+ARG NETWORKING_BASE=public.ecr.aws/v9l4g5s4/networking-base:v5
 ARG TRTLLM_IMAGE=nvcr.io/nvidia/ai-dynamo/tensorrtllm-runtime:1.0.1
 ARG VLLM_IMAGE=nvcr.io/nvidia/ai-dynamo/vllm-runtime:1.0.1
 
@@ -70,9 +79,11 @@ RUN pip install --no-cache-dir \
       boto3 2>/dev/null || true
 
 # The Dynamo runtime images install everything into /opt/dynamo/venv.
-# Record the prefix and site-packages explicitly so later stages don't guess.
-RUN python3 -c "import sys; print(sys.prefix)"             > /opt/.trtllm_prefix \
- && python3 -c "import site; print(site.getsitepackages()[0])" > /opt/.trtllm_sitepkg \
+# We skip invoking python3 here (the runtime image's ENTRYPOINT runs
+# nvidia-smi diagnostics which can stall during `docker build` without a
+# GPU); record the paths statically and fs-check the layout instead.
+RUN echo "/opt/dynamo/venv"                                 > /opt/.trtllm_prefix \
+ && echo "/opt/dynamo/venv/lib/python3.12/site-packages"    > /opt/.trtllm_sitepkg \
  && test -d /opt/dynamo/venv/lib/python3.12/site-packages/tensorrt_llm \
  && test -x /opt/dynamo/venv/bin/trtllm-serve \
  && test -x /opt/dynamo/venv/bin/trtllm-build
@@ -153,16 +164,20 @@ ENV LD_LIBRARY_PATH="/opt/nvidia/nvda_nixl/lib64:/opt/nvidia/nvda_nixl/lib64/plu
     HPCX_DIR="" HPCX_MPI_DIR="" HPCX_HOME="" HPCX_UCX_DIR="" \
     DYNAMO_BACKEND=vllm
 
-# Validation — runtime-deferred (import-heavy checks happen at startup, not build)
+# Validation — filesystem-only. Python imports are deferred to runtime
+# because the NVIDIA runtime image's build-time entrypoint can stall the
+# CodeBuild step when run without GPU access.
 RUN echo "=== dynamo-combined-efa build validation ===" \
  && ls /opt/nvidia/nvda_nixl/lib64/plugins/libplugin_LIBFABRIC.so \
- && echo "NIXL LIBFABRIC plugin: present" \
+ && echo "  NIXL LIBFABRIC plugin: present" \
  && ls /opt/amazon/efa/lib/libfabric.so* >/dev/null \
- && echo "libfabric: present" \
- && ls /opt/trtllm/tensorrt_llm >/dev/null \
- && echo "TRT-LLM staged at /opt/trtllm" \
- && python3 -c "import vllm; print(f'vLLM {vllm.__version__}: OK')" 2>/dev/null \
-     || echo "vLLM import deferred to runtime" \
+ && echo "  libfabric: present" \
+ && ls /opt/trtllm-venv/bin/trtllm-serve >/dev/null \
+ && ls /opt/trtllm-venv/lib/python3.12/site-packages/tensorrt_llm >/dev/null \
+ && echo "  TRT-LLM venv present at /opt/trtllm-venv" \
+ && (ls /opt/dynamo/venv/lib/python3.12/site-packages/vllm >/dev/null 2>&1 \
+      && echo "  vLLM site-packages present at /opt/dynamo/venv" \
+      || echo "  vLLM: deferred (runtime check)") \
  && echo "=== OK ==="
 
 ENTRYPOINT ["/usr/local/bin/dynamo-combined-entrypoint"]
