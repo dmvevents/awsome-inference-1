@@ -209,10 +209,26 @@ build_vllm() {
 
 build_combined() {
     local IMAGE_NAME="${COMBINED_IMAGE}${GPU_SUFFIX}"
+    local BASE_IMAGE="${EFA_IMAGE}${GPU_SUFFIX}"
     log_info "Building combined (vLLM + TRT-LLM) image: ${IMAGE_NAME}:${TAG}"
 
-    docker build ${CACHE_OPT} \
+    # Ensure the EFA base is built first — Dockerfile.dynamo-combined-efa
+    # overlays this repo's Dockerfile.efa output into both runtime images.
+    if ! docker image inspect ${BASE_IMAGE}:${TAG} > /dev/null 2>&1; then
+        log_warn "Base EFA image not found, building it first..."
+        build_efa
+    fi
+
+    # Add CUDA architecture build arg if specified
+    ARCH_ARG=""
+    if [ -n "$CUDA_ARCH" ]; then
+        ARCH_ARG="--build-arg CUDA_ARCH=${CUDA_ARCH}"
+        log_info "Using CUDA architecture: ${CUDA_ARCH}"
+    fi
+
+    docker build ${CACHE_OPT} ${ARCH_ARG} \
         -f Dockerfile.dynamo-combined-efa \
+        --build-arg BASE_IMAGE=${BASE_IMAGE}:${TAG} \
         -t ${IMAGE_NAME}:${TAG} \
         .
 
