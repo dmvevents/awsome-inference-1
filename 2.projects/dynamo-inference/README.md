@@ -301,9 +301,15 @@ docker pull public.ecr.aws/[your-registry]/dynamo-trtllm:latest
 #### 1. Prepare Environment
 
 ```bash
-# Set namespace and version
+# Set namespace and chart versions.
+# As of 2026-04-20, public NGC (helm.ngc.nvidia.com/nvidia/ai-dynamo) publishes:
+#   - dynamo-crds     latest public = 0.9.1
+#   - dynamo-platform latest public = 1.0.1  (skip 1.0.0 — Blackwell crash)
+# The two chart versions intentionally diverge: 1.0.x platform is compatible
+# with 0.9.1 CRDs. Both downloads are anonymous (no NGC login required).
 export NAMESPACE=default
-export RELEASE_VERSION=0.6.1
+export DYNAMO_CRDS_VERSION=0.9.1
+export DYNAMO_PLATFORM_VERSION=1.0.1
 
 # Label GPU nodes for CUDA 12.x
 kubectl get nodes -l node.kubernetes.io/instance-type -o name | \
@@ -313,12 +319,12 @@ kubectl get nodes -l node.kubernetes.io/instance-type -o name | \
 #### 2. Install Dynamo Platform
 
 ```bash
-# Install CRDs and platform
-helm fetch https://helm.ngc.nvidia.com/nvidia/ai-dynamo/charts/dynamo-crds-${RELEASE_VERSION}.tgz
-helm fetch https://helm.ngc.nvidia.com/nvidia/ai-dynamo/charts/dynamo-platform-${RELEASE_VERSION}.tgz
+# Install CRDs and platform — both are anonymous fetches, no NGC login needed.
+helm fetch https://helm.ngc.nvidia.com/nvidia/ai-dynamo/charts/dynamo-crds-${DYNAMO_CRDS_VERSION}.tgz
+helm fetch https://helm.ngc.nvidia.com/nvidia/ai-dynamo/charts/dynamo-platform-${DYNAMO_PLATFORM_VERSION}.tgz
 
-helm install dynamo-crds dynamo-crds-${RELEASE_VERSION}.tgz --namespace ${NAMESPACE}
-helm install dynamo-platform dynamo-platform-${RELEASE_VERSION}.tgz --namespace ${NAMESPACE}
+helm install dynamo-crds     dynamo-crds-${DYNAMO_CRDS_VERSION}.tgz     --namespace ${NAMESPACE} --create-namespace
+helm install dynamo-platform dynamo-platform-${DYNAMO_PLATFORM_VERSION}.tgz --namespace ${NAMESPACE}
 
 # Patch etcd for compatibility
 kubectl patch statefulset dynamo-platform-etcd -n ${NAMESPACE} -p \
