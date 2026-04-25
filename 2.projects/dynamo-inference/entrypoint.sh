@@ -28,7 +28,7 @@ case "$BACKEND" in
     # (libmpi.so.40). /opt/trtllm-libs has MKL copied from the upstream
     # tensorrtllm-runtime; libmpi is provided by the distro libopenmpi3 in
     # /usr/lib/x86_64-linux-gnu. Also add trtllm's own libs dir.
-    export LD_LIBRARY_PATH="/opt/trtllm-cuda13:/opt/trtllm-libs:/opt/trtllm-venv/lib/python3.12/site-packages/tensorrt_llm/libs:/usr/lib/x86_64-linux-gnu:${LD_LIBRARY_PATH:-}"
+    export LD_LIBRARY_PATH="/opt/trtllm-cuda13:/opt/trtllm-cuda13/nvshmem:/opt/trtllm-libs:/opt/trtllm-venv/lib/python3.12/site-packages/tensorrt_llm/libs:/usr/lib/x86_64-linux-gnu:${LD_LIBRARY_PATH:-}"
     # Drop any vLLM-venv PYTHONPATH leakage.
     unset PYTHONHOME
     exec "$@"

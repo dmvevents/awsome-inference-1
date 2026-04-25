@@ -68,6 +68,9 @@ COPY --from=networking /opt/nvidia/nvda_nixl   /opt/nvidia/nvda_nixl
 COPY --from=networking /lib/x86_64-linux-gnu/libefa.so*      /lib/x86_64-linux-gnu/
 COPY --from=networking /lib/x86_64-linux-gnu/libibverbs.so*  /lib/x86_64-linux-gnu/
 COPY --from=networking /lib/x86_64-linux-gnu/librdmacm.so*   /lib/x86_64-linux-gnu/
+# libibverbs provider shared objects (rdmav59 ABI — what NCCL 2.30+ loads).
+# The upstream NVIDIA Dynamo runtime images ship rdmav34; replace with v59.
+COPY --from=networking /usr/lib/x86_64-linux-gnu/libibverbs/ /usr/lib/x86_64-linux-gnu/libibverbs/
 
 RUN cd /lib/x86_64-linux-gnu \
  && LIBEFA=$(ls libefa.so.1.*.0 2>/dev/null | sort -V | tail -1) \
@@ -104,6 +107,9 @@ COPY --from=networking /opt/nvidia/nvda_nixl   /opt/nvidia/nvda_nixl
 COPY --from=networking /lib/x86_64-linux-gnu/libefa.so*      /lib/x86_64-linux-gnu/
 COPY --from=networking /lib/x86_64-linux-gnu/libibverbs.so*  /lib/x86_64-linux-gnu/
 COPY --from=networking /lib/x86_64-linux-gnu/librdmacm.so*   /lib/x86_64-linux-gnu/
+# libibverbs provider shared objects (rdmav59 ABI — what NCCL 2.30+ loads).
+# The upstream NVIDIA Dynamo runtime images ship rdmav34; replace with v59.
+COPY --from=networking /usr/lib/x86_64-linux-gnu/libibverbs/ /usr/lib/x86_64-linux-gnu/libibverbs/
 
 RUN cd /lib/x86_64-linux-gnu \
  && LIBEFA=$(ls libefa.so.1.*.0 2>/dev/null | sort -V | tail -1) \
@@ -156,6 +162,18 @@ COPY --from=trtllm-stage /usr/local/cuda/include                         /opt/tr
 COPY --from=trtllm-stage /usr/lib/x86_64-linux-gnu/libcudnn*   /opt/trtllm-cuda13/
 # nccl for CUDA 13 (TRT-LLM's torch links its own NCCL)
 COPY --from=trtllm-stage /usr/lib/x86_64-linux-gnu/libnccl.so* /opt/trtllm-cuda13/
+# UCC (collective comms library) from HPCX — TRT-LLM torch links it.
+# HPCX ompi is kept UNSET so aws-ofi-nccl remains the NCCL net plugin; UCC is
+# only loaded by torch's dlopen chain, not used as a message transport.
+COPY --from=trtllm-stage /opt/hpcx/ucc/lib/libucc.so*          /opt/trtllm-libs/
+COPY --from=trtllm-stage /opt/hpcx/ucc/lib/ucc                 /opt/trtllm-libs/ucc
+# Also pull the HPCX ompi libraries TRT-LLM was linked against (libmpi.so.40.30.8).
+# Distro libopenmpi3 is .30.6 which usually works via soname, but keep HPCX as a
+# fallback under a dedicated path for future experiments.
+COPY --from=trtllm-stage /opt/hpcx/ompi/lib/libmpi.so*         /opt/trtllm-libs/
+COPY --from=trtllm-stage /opt/hpcx/ompi/lib/libopen-*          /opt/trtllm-libs/
+# nvshmem 3 for CUDA 13 — TRT-LLM torch links libnvshmem_host.so.3
+COPY --from=trtllm-stage /usr/lib/x86_64-linux-gnu/nvshmem/13  /opt/trtllm-cuda13/nvshmem
 
 RUN test -d /opt/trtllm-venv/lib/python3.12/site-packages/tensorrt_llm \
  && test -x /opt/trtllm-venv/bin/trtllm-serve \
