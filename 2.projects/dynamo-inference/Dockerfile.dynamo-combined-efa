@@ -62,7 +62,9 @@ USER root
 COPY --from=networking /opt/gdrcopy            /opt/gdrcopy
 COPY --from=networking /usr/local/ucx          /usr/local/ucx
 COPY --from=networking /opt/amazon/efa         /opt/amazon/efa
+COPY --from=networking /opt/amazon/aws-ofi-nccl /opt/amazon/aws-ofi-nccl
 COPY --from=networking /opt/nvidia/nvda_nixl   /opt/nvidia/nvda_nixl
+COPY --from=networking /usr/local/nccl         /usr/local/nccl
 
 # rdma-core libs w/ EFA_1.4 symbols
 COPY --from=networking /lib/x86_64-linux-gnu/libefa.so*      /lib/x86_64-linux-gnu/
@@ -102,7 +104,9 @@ USER root
 COPY --from=networking /opt/gdrcopy            /opt/gdrcopy
 COPY --from=networking /usr/local/ucx          /usr/local/ucx
 COPY --from=networking /opt/amazon/efa         /opt/amazon/efa
+COPY --from=networking /opt/amazon/aws-ofi-nccl /opt/amazon/aws-ofi-nccl
 COPY --from=networking /opt/nvidia/nvda_nixl   /opt/nvidia/nvda_nixl
+COPY --from=networking /usr/local/nccl         /usr/local/nccl
 
 COPY --from=networking /lib/x86_64-linux-gnu/libefa.so*      /lib/x86_64-linux-gnu/
 COPY --from=networking /lib/x86_64-linux-gnu/libibverbs.so*  /lib/x86_64-linux-gnu/
@@ -188,7 +192,7 @@ WORKDIR /workspace
 COPY entrypoint.sh /usr/local/bin/dynamo-combined-entrypoint
 RUN chmod +x /usr/local/bin/dynamo-combined-entrypoint
 
-ENV LD_LIBRARY_PATH="/opt/nvidia/nvda_nixl/lib64:/opt/nvidia/nvda_nixl/lib64/plugins:/usr/local/ucx/lib:/opt/amazon/efa/lib:/opt/gdrcopy/lib:${LD_LIBRARY_PATH:-}" \
+ENV LD_LIBRARY_PATH="/opt/nvidia/nvda_nixl/lib64:/opt/nvidia/nvda_nixl/lib64/plugins:/usr/local/ucx/lib:/opt/amazon/efa/lib:/opt/amazon/aws-ofi-nccl/lib:/usr/local/nccl/lib:/opt/gdrcopy/lib:${LD_LIBRARY_PATH:-}" \
     PATH="/usr/local/ucx/bin:/opt/amazon/efa/bin:${PATH}" \
     FI_PROVIDER=efa \
     FI_EFA_USE_DEVICE_RDMA=1 \
