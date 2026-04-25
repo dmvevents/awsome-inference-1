@@ -125,9 +125,37 @@ FROM vllm-stage AS combined
 
 USER root
 
+# OpenMPI runtime: TRT-LLM's torch binary links libmpi.so.40 at load time.
+# Distro openmpi is safe here — HPCX is kept unset so aws-ofi-nccl is the active
+# NCCL network plugin over EFA/libfabric; OpenMPI just satisfies torch's dlopen.
+RUN apt-get update && \
+    DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
+        libopenmpi3 openmpi-bin && \
+    rm -rf /var/lib/apt/lists/*
+
 COPY --from=trtllm-stage /opt/dynamo/venv                    /opt/trtllm-venv
 COPY --from=trtllm-stage /opt/.trtllm_prefix                 /opt/trtllm/.prefix
 COPY --from=trtllm-stage /opt/.trtllm_sitepkg                /opt/trtllm/.sitepkg
+
+# Intel MKL libraries required by TRT-LLM's torch.
+# The upstream NGC tensorrtllm-runtime ships MKL at /usr/local/lib/libmkl_*.
+# Copy them into /opt/trtllm-libs so we can add them to the trtllm-backend
+# LD_LIBRARY_PATH without polluting the default (vLLM) runtime linker path.
+COPY --from=trtllm-stage /usr/local/lib/libmkl_*            /opt/trtllm-libs/
+COPY --from=trtllm-stage /usr/local/lib/libiomp5*           /opt/trtllm-libs/
+
+# CUDA 13 runtime libraries required by TRT-LLM.
+# The trtllm venv bundles nvidia-cu13 wheels for some libs but torch expects
+# system CUDA 13 runtime libs for libcublas/libcusolver/libcufft/libcudnn.
+# vLLM uses CUDA 12.9 (the image's default); TRT-LLM torch uses CUDA 13.
+# Segregating under /opt/trtllm-cuda13 keeps the two CUDA stacks side-by-side.
+COPY --from=trtllm-stage /usr/local/cuda-13.1/targets/x86_64-linux/lib/  /opt/trtllm-cuda13/
+COPY --from=trtllm-stage /usr/local/cuda/include                         /opt/trtllm-cuda13/include
+
+# cuDNN 9 for CUDA 13 (TRT-LLM torch dlopens libcudnn.so.9 during init).
+COPY --from=trtllm-stage /usr/lib/x86_64-linux-gnu/libcudnn*   /opt/trtllm-cuda13/
+# nccl for CUDA 13 (TRT-LLM's torch links its own NCCL)
+COPY --from=trtllm-stage /usr/lib/x86_64-linux-gnu/libnccl.so* /opt/trtllm-cuda13/
 
 RUN test -d /opt/trtllm-venv/lib/python3.12/site-packages/tensorrt_llm \
  && test -x /opt/trtllm-venv/bin/trtllm-serve \
@@ -201,11 +229,11 @@ RUN if [ "$GENERATE_SBOM" = "1" ]; then \
 RUN if [ "$CVE_SCAN" = "1" ]; then \
         echo "=== CVE Scan (CRITICAL + HIGH) ===" && \
         trivy filesystem --scanners vuln --severity CRITICAL,HIGH \
-            --skip-db-download --skip-java-db-download \
+            --skip-db-update --skip-java-db-update \
             --timeout 10m --quiet / > /opt/security/cve-report.txt 2>&1 || true && \
         echo "=== CVE Scan (CRITICAL only) ===" && \
         trivy filesystem --scanners vuln --severity CRITICAL \
-            --skip-db-download --skip-java-db-download \
+            --skip-db-update --skip-java-db-update \
             --timeout 10m --quiet / > /opt/security/cve-critical.txt 2>&1 || true && \
         echo "CVE scan complete"; \
     else \

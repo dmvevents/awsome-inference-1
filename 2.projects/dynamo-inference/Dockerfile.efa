@@ -71,9 +71,9 @@ PASS=0; FAIL=0
 check() {
     local name="$1"; shift
     if "$@" >/dev/null 2>&1; then
-        echo "  PASS: $name"; ((PASS++))
+        echo "  PASS: $name"; PASS=$((PASS+1))
     else
-        echo "  FAIL: $name"; ((FAIL++))
+        echo "  FAIL: $name"; FAIL=$((FAIL+1))
     fi
 }
 
@@ -82,7 +82,7 @@ echo "--- Component presence ---"
 check "libfabric"          test -f /opt/amazon/efa/lib/libfabric.so
 check "fi_info"            which fi_info
 check "GDRCopy"            test -f /opt/gdrcopy/lib/libgdrapi.so
-check "UCX"                test -f /usr/local/ucx/lib/libucx.so
+check "UCX"                test -f /usr/local/ucx/lib/libucp.so
 check "NIXL"               test -f /opt/nvidia/nvda_nixl/lib64/libnixl.so
 check "NIXL libfabric plugin" test -f /opt/nvidia/nvda_nixl/lib64/plugins/libplugin_LIBFABRIC.so
 check "NCCL"               test -f /usr/local/nccl/lib/libnccl.so
@@ -100,18 +100,18 @@ echo ""
 echo "--- GIN plugin symbols ---"
 OFI_SO=$(find /opt/amazon -name "libnccl-net-ofi.so" 2>/dev/null | head -1)
 if [ -n "$OFI_SO" ] && nm -D "$OFI_SO" 2>/dev/null | grep -q ncclGin; then
-    echo "  PASS: aws-ofi-nccl exports ncclGin symbols"; ((PASS++))
+    echo "  PASS: aws-ofi-nccl exports ncclGin symbols"; PASS=$((PASS+1))
 else
-    echo "  FAIL: aws-ofi-nccl missing ncclGin symbols"; ((FAIL++))
+    echo "  FAIL: aws-ofi-nccl missing ncclGin symbols"; FAIL=$((FAIL+1))
 fi
 
 echo ""
 echo "--- Python packages ---"
 for pkg in nixl nemo_evaluator nvidia_resiliency_ext; do
     if python3 -c "import $pkg" 2>/dev/null; then
-        echo "  PASS: python3 import $pkg"; ((PASS++))
+        echo "  PASS: python3 import $pkg"; PASS=$((PASS+1))
     else
-        echo "  FAIL: python3 import $pkg"; ((FAIL++))
+        echo "  FAIL: python3 import $pkg"; FAIL=$((FAIL+1))
     fi
 done
 
@@ -157,11 +157,11 @@ RUN if [ "$GENERATE_SBOM" = "1" ]; then \
 RUN if [ "$CVE_SCAN" = "1" ]; then \
         echo "=== CVE Scan (CRITICAL + HIGH) ===" && \
         trivy filesystem --scanners vuln --severity CRITICAL,HIGH \
-            --skip-db-download --skip-java-db-download \
+            --skip-db-update --skip-java-db-update \
             --timeout 10m --quiet / > /opt/security/cve-report.txt 2>&1 || true && \
         echo "=== CVE Scan (CRITICAL only) ===" && \
         trivy filesystem --scanners vuln --severity CRITICAL \
-            --skip-db-download --skip-java-db-download \
+            --skip-db-update --skip-java-db-update \
             --timeout 10m --quiet / > /opt/security/cve-critical.txt 2>&1 || true && \
         echo "CVE scan complete"; \
     else \
