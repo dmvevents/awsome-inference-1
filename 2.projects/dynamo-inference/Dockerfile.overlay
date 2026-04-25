@@ -1,41 +1,49 @@
 # syntax=docker/dockerfile:1.10
 # =============================================================================
-# Dockerfile.dynamo-combined-efa — Dynamo with vLLM + TRT-LLM over EFA
+# Dynamo Combined EFA — TRT-LLM + vLLM in one image, clean overlay pattern
 # =============================================================================
+# A single deployable container that serves EITHER the TRT-LLM or vLLM backend
+# from NVIDIA's official Dynamo runtime images, with our EFA/NCCL/NIXL stack
+# layered on top via a clean multi-stage overlay.
 #
-# Single deployable container serving EITHER the TRT-LLM or vLLM backend from
-# NVIDIA's official Dynamo runtime images, with the EFA/NCCL/NIXL networking
-# stack overlaid. Includes SBOM (syft) and CVE scanning (trivy) in-build.
-#
-# Runtime backend selection:
-#   docker run ... -e DYNAMO_BACKEND=vllm   dynamo-combined-efa:v1  (default)
+# Selection at runtime:
 #   docker run ... -e DYNAMO_BACKEND=trtllm dynamo-combined-efa:v1
+#   docker run ... -e DYNAMO_BACKEND=vllm   dynamo-combined-efa:v1
 #
-# Multi-arch build:
-#   docker buildx build --platform linux/amd64,linux/arm64 \
-#       -f Dockerfile.dynamo-combined-efa \
+# Design goals (contrast with the discarded docs/reference/Dockerfile.dynamo-combined-efa):
+#   - No libc10_compat.so ABI shim, no LD_PRELOAD hack
+#   - No sed-patched Python source
+#   - No 90+ line .so copy list — uses directory copies from networking-base:v5
+#   - Inherits CVE remediation + pinned versions from networking-base:v5
+#   - Inherits official Dynamo runtime images (no from-source rebuild)
+#   - Consistent EFA 1.48.0 / libfabric 2.4.0amzn3.0 / aws-ofi-nccl 1.19.0-1 NGC v1
+#
+# Build (self-contained — no pre-built private image required; CodeBuild works):
+#   docker build -f Dockerfile.dynamo-combined-efa \
 #       -t dynamo-combined-efa:v1 .
 #
-# Single-arch (typical for GPU clusters):
-#   docker buildx build --platform linux/amd64 \
-#       -f Dockerfile.dynamo-combined-efa \
-#       -t dynamo-combined-efa:v1 .
+# The default NETWORKING_BASE is public.ecr.aws/v9l4g5s4/networking-base:v5
+# (anonymous pull, ~17 GB). Override if you mirror the base yourself:
+#   docker build --build-arg NETWORKING_BASE=your-registry/networking-base:v5 \
+#       -f Dockerfile.dynamo-combined-efa -t dynamo-combined-efa:v1 .
 #
-# Build args:
-#   NETWORKING_BASE  — networking-base image (default: public ECR)
-#   TRTLLM_IMAGE     — TRT-LLM runtime source (default: NGC 1.0.1)
-#   VLLM_IMAGE       — vLLM runtime source (default: NGC 1.0.1)
-#   GENERATE_SBOM    — "0" to skip SBOM (default: "1")
-#   CVE_SCAN         — "0" to skip CVE scan (default: "1")
-#
-# Security artifacts (inside image at /opt/security/):
-#   sbom.spdx.json       — SPDX 2.3 SBOM
-#   sbom.cyclonedx.json  — CycloneDX 1.5 SBOM
-#   cve-report.txt       — Trivy CRITICAL + HIGH
-#   cve-critical.txt     — Trivy CRITICAL only
-#
+# Test distribution (per ticket P416074947):
+#   - g5.8xlarge     ( 1 EFA, A10G)  — basic EFA + single-backend smoke
+#   - p5.48xlarge    (32 EFA, H100)  — multi-rail EFA + both backends
+#   - p5en.48xlarge  (16 EFA, H200)  — multi-rail EFA + both backends
 # =============================================================================
 
+# networking-base:v5 is published to public.ecr.aws (anonymous pull, no AWS
+# auth needed). If you are building inside an AWS account, CodeBuild etc.
+# already has pull access to public.ecr.aws. If you want to override with
+# your own mirror, pass --build-arg NETWORKING_BASE=your-registry/your-base.
+#
+# NOTE — NO SBOM by design
+# This overlay Dockerfile is a *reference* showing the minimal pattern
+# for overlaying networking-base onto an upstream NGC runtime. The
+# shipping image with integrated SBOM + CVE scanning is
+# Dockerfile.dynamo-combined-efa (see sibling file).
+#
 ARG NETWORKING_BASE=public.ecr.aws/v9l4g5s4/networking-base:v5
 ARG TRTLLM_IMAGE=nvcr.io/nvidia/ai-dynamo/tensorrtllm-runtime:1.0.1
 ARG VLLM_IMAGE=nvcr.io/nvidia/ai-dynamo/vllm-runtime:1.0.1
@@ -46,13 +54,7 @@ ARG VLLM_IMAGE=nvcr.io/nvidia/ai-dynamo/vllm-runtime:1.0.1
 FROM ${NETWORKING_BASE} AS networking
 
 # ---------------------
-# Security scanner binaries (multi-arch)
-# ---------------------
-FROM aquasec/trivy:latest AS trivy-bin
-FROM anchore/syft:latest AS syft-bin
-
-# ---------------------
-# TRT-LLM stage
+# TRT-LLM stage (intermediate — we harvest it into the combined stage)
 # ---------------------
 FROM ${TRTLLM_IMAGE} AS trtllm-stage
 
@@ -64,7 +66,7 @@ COPY --from=networking /usr/local/ucx          /usr/local/ucx
 COPY --from=networking /opt/amazon/efa         /opt/amazon/efa
 COPY --from=networking /opt/nvidia/nvda_nixl   /opt/nvidia/nvda_nixl
 
-# rdma-core libs w/ EFA_1.4 symbols
+# rdma-core libs w/ EFA_1.4 symbols (overlay on top of whatever is in the runtime image)
 COPY --from=networking /lib/x86_64-linux-gnu/libefa.so*      /lib/x86_64-linux-gnu/
 COPY --from=networking /lib/x86_64-linux-gnu/libibverbs.so*  /lib/x86_64-linux-gnu/
 COPY --from=networking /lib/x86_64-linux-gnu/librdmacm.so*   /lib/x86_64-linux-gnu/
@@ -83,6 +85,10 @@ RUN pip install --no-cache-dir \
       "nixl>=1.0.0" \
       boto3 2>/dev/null || true
 
+# The Dynamo runtime images install everything into /opt/dynamo/venv.
+# We skip invoking python3 here (the runtime image's ENTRYPOINT runs
+# nvidia-smi diagnostics which can stall during `docker build` without a
+# GPU); record the paths statically and fs-check the layout instead.
 RUN echo "/opt/dynamo/venv"                                 > /opt/.trtllm_prefix \
  && echo "/opt/dynamo/venv/lib/python3.12/site-packages"    > /opt/.trtllm_sitepkg \
  && test -d /opt/dynamo/venv/lib/python3.12/site-packages/tensorrt_llm \
@@ -90,7 +96,7 @@ RUN echo "/opt/dynamo/venv"                                 > /opt/.trtllm_prefi
  && test -x /opt/dynamo/venv/bin/trtllm-build
 
 # ---------------------
-# vLLM stage
+# vLLM stage (intermediate)
 # ---------------------
 FROM ${VLLM_IMAGE} AS vllm-stage
 
@@ -119,16 +125,23 @@ RUN pip install --no-cache-dir \
       boto3 2>/dev/null || true
 
 # ---------------------
-# Combined stage — vLLM base + TRT-LLM overlay
+# Combined final stage — built on vLLM runtime as the base, with TRT-LLM stack
+# overlaid into an isolated prefix so the two Python environments don't clash.
 # ---------------------
 FROM vllm-stage AS combined
 
 USER root
 
+# Isolate TRT-LLM into /opt/trtllm so we don't stomp vLLM's site-packages.
+# The Dynamo TRT-LLM runtime ships everything under /opt/dynamo/venv. We keep
+# its self-contained venv intact at /opt/trtllm-venv and expose a /opt/trtllm
+# directory with just the symlinks that the entrypoint needs.
 COPY --from=trtllm-stage /opt/dynamo/venv                    /opt/trtllm-venv
 COPY --from=trtllm-stage /opt/.trtllm_prefix                 /opt/trtllm/.prefix
 COPY --from=trtllm-stage /opt/.trtllm_sitepkg                /opt/trtllm/.sitepkg
 
+# Quick sanity — the TRT-LLM venv must be usable as-is (it is a self-contained
+# Python environment, so Python itself doesn't run yet, but the files exist).
 RUN test -d /opt/trtllm-venv/lib/python3.12/site-packages/tensorrt_llm \
  && test -x /opt/trtllm-venv/bin/trtllm-serve \
  && test -x /opt/trtllm-venv/bin/trtllm-build \
@@ -137,8 +150,10 @@ RUN test -d /opt/trtllm-venv/lib/python3.12/site-packages/tensorrt_llm \
  && ln -sf /opt/trtllm-venv/bin/trtllm-build /opt/trtllm/bin/trtllm-build \
  && ln -sf /opt/trtllm-venv/lib/python3.12/site-packages/tensorrt_llm /opt/trtllm/tensorrt_llm
 
+# The official Dynamo runtime images use /workspace as the CWD; keep that.
 WORKDIR /workspace
 
+# Backend selector entrypoint — picks PYTHONPATH/PATH based on DYNAMO_BACKEND
 COPY entrypoint.sh /usr/local/bin/dynamo-combined-entrypoint
 RUN chmod +x /usr/local/bin/dynamo-combined-entrypoint
 
@@ -156,7 +171,9 @@ ENV LD_LIBRARY_PATH="/opt/nvidia/nvda_nixl/lib64:/opt/nvidia/nvda_nixl/lib64/plu
     HPCX_DIR="" HPCX_MPI_DIR="" HPCX_HOME="" HPCX_UCX_DIR="" \
     DYNAMO_BACKEND=vllm
 
-# Filesystem validation (no Python execution — avoids GPU-less CodeBuild stalls)
+# Validation — filesystem-only. Python imports are deferred to runtime
+# because the NVIDIA runtime image's build-time entrypoint can stall the
+# CodeBuild step when run without GPU access.
 RUN echo "=== dynamo-combined-efa build validation ===" \
  && ls /opt/nvidia/nvda_nixl/lib64/plugins/libplugin_LIBFABRIC.so \
  && echo "  NIXL LIBFABRIC plugin: present" \
@@ -169,65 +186,6 @@ RUN echo "=== dynamo-combined-efa build validation ===" \
       && echo "  vLLM site-packages present at /opt/dynamo/venv" \
       || echo "  vLLM: deferred (runtime check)") \
  && echo "=== OK ==="
-
-# ---------------------
-# Security scan stage
-# ---------------------
-FROM combined AS security-scan
-
-ARG GENERATE_SBOM=1
-ARG CVE_SCAN=1
-
-COPY --from=trivy-bin /usr/local/bin/trivy /usr/local/bin/trivy
-COPY --from=syft-bin /syft /usr/local/bin/syft
-
-RUN mkdir -p /opt/security
-
-# SBOM generation (syft — SPDX + CycloneDX)
-RUN if [ "$GENERATE_SBOM" = "1" ]; then \
-        echo "=== Generating SBOM (SPDX) ===" && \
-        syft dir:/ -o spdx-json=/opt/security/sbom.spdx.json 2>/dev/null || \
-            echo '{"comment":"sbom generation skipped or failed"}' > /opt/security/sbom.spdx.json && \
-        echo "=== Generating SBOM (CycloneDX) ===" && \
-        syft dir:/ -o cyclonedx-json=/opt/security/sbom.cyclonedx.json 2>/dev/null || \
-            echo '{"comment":"sbom generation skipped or failed"}' > /opt/security/sbom.cyclonedx.json && \
-        echo "SBOM generation complete"; \
-    else \
-        echo '{"comment":"sbom generation disabled"}' > /opt/security/sbom.spdx.json && \
-        echo '{"comment":"sbom generation disabled"}' > /opt/security/sbom.cyclonedx.json; \
-    fi
-
-# CVE scan (trivy filesystem mode)
-RUN if [ "$CVE_SCAN" = "1" ]; then \
-        echo "=== CVE Scan (CRITICAL + HIGH) ===" && \
-        trivy filesystem --scanners vuln --severity CRITICAL,HIGH \
-            --skip-db-download --skip-java-db-download \
-            --timeout 10m --quiet / > /opt/security/cve-report.txt 2>&1 || true && \
-        echo "=== CVE Scan (CRITICAL only) ===" && \
-        trivy filesystem --scanners vuln --severity CRITICAL \
-            --skip-db-download --skip-java-db-download \
-            --timeout 10m --quiet / > /opt/security/cve-critical.txt 2>&1 || true && \
-        echo "CVE scan complete"; \
-    else \
-        echo "CVE scan disabled" > /opt/security/cve-report.txt && \
-        echo "CVE scan disabled" > /opt/security/cve-critical.txt; \
-    fi
-
-# ---------------------
-# Final stage — clean image with security artifacts, no scanner binaries
-# ---------------------
-FROM combined AS final
-
-COPY --from=security-scan /opt/security /opt/security
-
-LABEL maintainer="nemo-rl" \
-      description="Dynamo Combined EFA — TRT-LLM + vLLM with SBOM and CVE scan" \
-      dynamo.trtllm.version="1.0.1" \
-      dynamo.vllm.version="1.0.1" \
-      efa.version="1.48.0" \
-      networking.base="v5" \
-      security.sbom="spdx+cyclonedx at /opt/security/" \
-      security.cve-scan="trivy at /opt/security/"
 
 ENTRYPOINT ["/usr/local/bin/dynamo-combined-entrypoint"]
 CMD ["--help"]

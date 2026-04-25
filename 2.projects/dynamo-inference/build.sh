@@ -13,6 +13,10 @@ BUILD_TARGET="all"
 PUSH=false
 NO_CACHE=false
 CUDA_ARCH=""  # Will use default from Dockerfile if not specified
+GENERATE_SBOM=1
+CVE_SCAN=1
+SBOM_OUT_DIR="$(pwd)/out/sbom"
+EXTRACT_SBOM=1
 
 # Colors for output
 RED='\033[0;31m'
@@ -29,9 +33,13 @@ print_usage() {
     echo "  -r, --registry REGISTRY   Container registry (e.g., public.ecr.aws/xxxxx)"
     echo "  -t, --tag TAG             Image tag (default: latest)"
     echo "  -b, --build TARGET        Build target: efa, trtllm, vllm, combined, all (default: all)"
-    echo "  -a, --arch ARCH           CUDA architecture: 80 (A100), 86 (A10), 90 (H100) (optional)"
+    echo "  -a, --arch ARCH           CUDA architecture: 80 (A100), 86 (A10), 90 (H100), 100 (B200/B300) (optional)"
     echo "  -p, --push                Push images to registry after build"
     echo "  -n, --no-cache            Build without Docker cache"
+    echo "      --no-sbom             Disable SBOM generation (default: enabled)"
+    echo "      --no-cve              Disable CVE scan (default: enabled)"
+    echo "      --no-extract          Skip post-build SBOM extraction to out/sbom/"
+    echo "      --sbom-out DIR        Output dir for extracted SBOMs (default: ./out/sbom)"
     echo "  -h, --help                Show this help message"
     echo ""
     echo "Examples:"
@@ -82,6 +90,10 @@ while [[ $# -gt 0 ]]; do
             NO_CACHE=true
             shift
             ;;
+        --no-sbom) GENERATE_SBOM=0; shift ;;
+        --no-cve) CVE_SCAN=0; shift ;;
+        --no-extract) EXTRACT_SBOM=0; shift ;;
+        --sbom-out) SBOM_OUT_DIR="$2"; shift 2 ;;
         -h|--help)
             print_usage
             exit 0
@@ -99,6 +111,25 @@ CACHE_OPT=""
 if [ "$NO_CACHE" = true ]; then
     CACHE_OPT="--no-cache"
 fi
+
+# SBOM build-args. The multi-stage Dockerfiles honor GENERATE_SBOM and CVE_SCAN.
+SBOM_ARGS="--build-arg GENERATE_SBOM=${GENERATE_SBOM} --build-arg CVE_SCAN=${CVE_SCAN}"
+SBOM_TARGET_ARG="--target final"
+
+extract_sbom() {
+    local img="$1"
+    [ "$EXTRACT_SBOM" = "1" ] || return 0
+    local sub="${img//[:\/]/_}"
+    mkdir -p "${SBOM_OUT_DIR}/${sub}"
+    local cid
+    cid=$(docker create "${img}" 2>/dev/null) || { log_warn "  extract_sbom: cannot create from ${img}"; return 0; }
+    if docker cp "${cid}:/opt/security/." "${SBOM_OUT_DIR}/${sub}/" 2>/dev/null; then
+        log_info "  SBOM of ${img} -> ${SBOM_OUT_DIR}/${sub}/"
+    else
+        log_warn "  ${img} has no /opt/security dir"
+    fi
+    docker rm "${cid}" >/dev/null 2>&1 || true
+}
 
 # Image names
 EFA_IMAGE="aws-efa-dynamo"
@@ -119,6 +150,9 @@ if [ -n "$CUDA_ARCH" ]; then
         90)
             GPU_SUFFIX="-h100"  # SM90 - H100 GPUs (Compute Capability 9.0)
             ;;
+        100)
+            GPU_SUFFIX="-b200"  # SM100 - B200 / B300 Blackwell GPUs (Compute Capability 10.0)
+            ;;
         *)
             GPU_SUFFIX="-sm${CUDA_ARCH}"
             ;;
@@ -136,7 +170,7 @@ build_efa() {
         log_info "Using CUDA architecture: ${CUDA_ARCH}"
     fi
 
-    docker build ${CACHE_OPT} ${ARCH_ARG} \
+    docker build ${CACHE_OPT} ${ARCH_ARG} ${SBOM_ARGS} ${SBOM_TARGET_ARG} \
         -f Dockerfile.efa \
         -t ${IMAGE_NAME}:${TAG} \
         .
@@ -145,6 +179,8 @@ build_efa() {
         docker tag ${IMAGE_NAME}:${TAG} ${REGISTRY}/${IMAGE_NAME}:${TAG}
         log_info "Tagged: ${REGISTRY}/${IMAGE_NAME}:${TAG}"
     fi
+
+    extract_sbom "${IMAGE_NAME}:${TAG}"
 }
 
 build_trtllm() {
@@ -165,7 +201,7 @@ build_trtllm() {
         log_info "Using CUDA architecture: ${CUDA_ARCH}"
     fi
 
-    docker build ${CACHE_OPT} ${ARCH_ARG} \
+    docker build ${CACHE_OPT} ${ARCH_ARG} ${SBOM_ARGS} ${SBOM_TARGET_ARG} \
         -f Dockerfile.dynamo-trtllm-efa \
         --build-arg BASE_IMAGE=${BASE_IMAGE}:${TAG} \
         -t ${IMAGE_NAME}:${TAG} \
@@ -175,6 +211,8 @@ build_trtllm() {
         docker tag ${IMAGE_NAME}:${TAG} ${REGISTRY}/${IMAGE_NAME}:${TAG}
         log_info "Tagged: ${REGISTRY}/${IMAGE_NAME}:${TAG}"
     fi
+
+    extract_sbom "${IMAGE_NAME}:${TAG}"
 }
 
 build_vllm() {
@@ -195,7 +233,7 @@ build_vllm() {
         log_info "Using CUDA architecture: ${CUDA_ARCH}"
     fi
 
-    docker build ${CACHE_OPT} ${ARCH_ARG} \
+    docker build ${CACHE_OPT} ${ARCH_ARG} ${SBOM_ARGS} ${SBOM_TARGET_ARG} \
         -f Dockerfile.dynamo-vllm-efa \
         --build-arg BASE_IMAGE=${BASE_IMAGE}:${TAG} \
         -t ${IMAGE_NAME}:${TAG} \
@@ -205,6 +243,8 @@ build_vllm() {
         docker tag ${IMAGE_NAME}:${TAG} ${REGISTRY}/${IMAGE_NAME}:${TAG}
         log_info "Tagged: ${REGISTRY}/${IMAGE_NAME}:${TAG}"
     fi
+
+    extract_sbom "${IMAGE_NAME}:${TAG}"
 }
 
 build_combined() {
@@ -226,7 +266,7 @@ build_combined() {
         log_info "Using CUDA architecture: ${CUDA_ARCH}"
     fi
 
-    docker build ${CACHE_OPT} ${ARCH_ARG} \
+    docker build ${CACHE_OPT} ${ARCH_ARG} ${SBOM_ARGS} ${SBOM_TARGET_ARG} \
         -f Dockerfile.dynamo-combined-efa \
         --build-arg BASE_IMAGE=${BASE_IMAGE}:${TAG} \
         -t ${IMAGE_NAME}:${TAG} \
@@ -236,6 +276,8 @@ build_combined() {
         docker tag ${IMAGE_NAME}:${TAG} ${REGISTRY}/${IMAGE_NAME}:${TAG}
         log_info "Tagged: ${REGISTRY}/${IMAGE_NAME}:${TAG}"
     fi
+
+    extract_sbom "${IMAGE_NAME}:${TAG}"
 }
 
 # Function to check if ECR repository exists and create if needed
