@@ -18,11 +18,10 @@ CVE_SCAN=1
 SBOM_OUT_DIR="$(pwd)/out/sbom"
 EXTRACT_SBOM=1
 
-# NETWORKING_BASE must be supplied explicitly. The Dockerfiles declare
-# `ARG NETWORKING_BASE` with NO default (option A, per Alex 2026-04-28),
-# so a missing value makes the docker build fail fast. Set via:
-#   --networking-base <your-registry>/networking-base:v5
-# or the NETWORKING_BASE environment variable.
+# NETWORKING_BASE is no longer required — the shipping Dockerfiles now build
+# the EFA + NCCL + UCX + NIXL stack inline from public NGC (cuda-dl-base).
+# See Dockerfile.efa, Dockerfile.dynamo-combined-efa, Dockerfile.overlay.
+# The --networking-base flag is accepted for back-compat but unused.
 NETWORKING_BASE="${NETWORKING_BASE:-}"
 
 # Colors for output
@@ -125,20 +124,13 @@ fi
 SBOM_ARGS="--build-arg GENERATE_SBOM=${GENERATE_SBOM} --build-arg CVE_SCAN=${CVE_SCAN}"
 SBOM_TARGET_ARG="--target final"
 
-# Required: NETWORKING_BASE — the Dockerfiles no longer carry a default.
-if [ -z "${NETWORKING_BASE}" ]; then
-    log_error "NETWORKING_BASE is required. Pass --networking-base <URI> or set env var."
-    log_error "  Build it first from the awesome-inferencing repo:"
-    log_error "    docker build -t efa-rdma-base:v1 base/efa-rdma-base/"
-    log_error "    docker build -t networking-base:v5 base/networking-base/"
-    log_error "  Or pull from your private ECR:"
-    log_error "    aws ecr get-login-password --region \$REGION | docker login --username AWS \\"
-    log_error "        --password-stdin \$ACCOUNT.dkr.ecr.\$REGION.amazonaws.com"
-    log_error "    docker pull \$ACCOUNT.dkr.ecr.\$REGION.amazonaws.com/networking-base:v5"
-    exit 1
+# NETWORKING_BASE is no longer required; Dockerfiles build networking stack inline.
+# Keep NETWORKING_BASE_ARG empty so existing invocations keep working.
+NETWORKING_BASE_ARG=""
+if [ -n "${NETWORKING_BASE}" ]; then
+    log_warn "NETWORKING_BASE was provided but is no longer used — shipping Dockerfiles"
+    log_warn "now build the networking stack inline from public cuda-dl-base. Ignoring."
 fi
-log_info "Using NETWORKING_BASE=${NETWORKING_BASE}"
-NETWORKING_BASE_ARG="--build-arg NETWORKING_BASE=${NETWORKING_BASE}"
 
 extract_sbom() {
     local img="$1"

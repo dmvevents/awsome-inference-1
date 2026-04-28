@@ -44,14 +44,86 @@
 # shipping image with integrated SBOM + CVE scanning is
 # Dockerfile.dynamo-combined-efa (see sibling file).
 #
-ARG NETWORKING_BASE
 ARG TRTLLM_IMAGE=nvcr.io/nvidia/ai-dynamo/tensorrtllm-runtime:1.0.1
 ARG VLLM_IMAGE=nvcr.io/nvidia/ai-dynamo/vllm-runtime:1.0.1
+
+# Public-only FROM chain. See Dockerfile.dynamo-combined-efa for the detailed
+# build of the networking stack; this overlay reference file mirrors the same
+# structure without the SBOM/CVE scanner stages.
+ARG CUDA_DL_BASE=nvcr.io/nvidia/cuda-dl-base:25.06-cuda12.9-devel-ubuntu24.04
+ARG GDRCOPY_REF=v2.5.2
+ARG EFA_VERSION=1.48.0
+ARG UCX_REF=v1.20.0
+ARG NIXL_REF=v1.0.1
+ARG NCCL_VERSION=v2.30.3-1
 
 # ---------------------
 # Networking source (shared)
 # ---------------------
-FROM ${NETWORKING_BASE} AS networking
+# efa-rdma + networking stages build from public cuda-dl-base, no private ARG
+FROM ${CUDA_DL_BASE} AS efa-rdma-stage
+ARG GDRCOPY_REF
+ARG EFA_VERSION
+USER root
+WORKDIR /workspace
+ENV CUDA_HOME=/usr/local/cuda \
+    PATH=/usr/local/cuda/bin:$PATH
+RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
+    apt-get update && DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
+        autoconf automake build-essential cmake curl git libnuma-dev libtool \
+        librdmacm-dev libibverbs-dev ninja-build numactl pkg-config \
+        python3-dev python3-pip wget pciutils net-tools iproute2 nvtop \
+    && apt-get clean && rm -rf /var/lib/apt/lists/*
+RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
+    apt-get update && mkdir -p /tmp/efa && cd /tmp/efa && \
+    curl --retry 3 -fsSL -o aws-efa-installer-${EFA_VERSION}.tar.gz \
+        https://efa-installer.amazonaws.com/aws-efa-installer-${EFA_VERSION}.tar.gz && \
+    tar -xf aws-efa-installer-${EFA_VERSION}.tar.gz && cd aws-efa-installer && \
+    ./efa_installer.sh -y --skip-kmod --skip-limit-conf --no-verify && \
+    ./efa_installer.sh --build-ngc -y && \
+    dpkg --force-depends -i DEBS/UBUNTU*/$(uname -m)/libfabric-aws-dev_*.deb && \
+    rm -f /opt/amazon/efa/lib/libfabric.a && rm -rf /tmp/efa && \
+    apt-get clean && rm -rf /var/lib/apt/lists/* && ldconfig
+RUN find /usr/local/cuda*/NsightSystems-cli-*/target-linux-x64/plugins/efa_metrics/nic_sampler -delete 2>/dev/null; \
+    find / -type f -name "nic_sampler" -delete 2>/dev/null; true
+RUN git clone --depth 1 --branch ${GDRCOPY_REF} https://github.com/NVIDIA/gdrcopy.git && \
+    cd gdrcopy && make -j$(nproc) prefix=/opt/gdrcopy CUDA=${CUDA_HOME} lib && \
+    make prefix=/opt/gdrcopy CUDA=${CUDA_HOME} install && \
+    echo "/opt/gdrcopy/lib" > /etc/ld.so.conf.d/gdrcopy.conf && ldconfig && \
+    cd /workspace && rm -rf gdrcopy
+ENV LD_LIBRARY_PATH="/opt/amazon/efa/lib:/opt/gdrcopy/lib:${LD_LIBRARY_PATH:-}" \
+    PATH="/opt/amazon/efa/bin:${PATH}"
+
+FROM efa-rdma-stage AS networking
+ARG UCX_REF
+ARG NIXL_REF
+ARG NCCL_VERSION
+RUN apt-get update && DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
+    libhwloc-dev libgflags-dev libtomlplusplus-dev && rm -rf /var/lib/apt/lists/*
+RUN pip3 install --no-cache-dir --break-system-packages meson pybind11
+RUN git clone --depth 1 --branch ${UCX_REF} https://github.com/openucx/ucx.git && \
+    cd ucx && ./autogen.sh && ./contrib/configure-release \
+        --prefix=/usr/local/ucx --enable-shared --disable-static --disable-doxygen-doc \
+        --enable-optimizations --enable-cma --enable-devel-headers \
+        --with-cuda=${CUDA_HOME} --with-verbs --with-dm \
+        --with-gdrcopy=/opt/gdrcopy --with-efa=/opt/amazon/efa --enable-mt && \
+    make -j$(nproc) && make -j install-strip && cd /workspace && rm -rf ucx
+ENV NIXL_PREFIX=/opt/nvidia/nvda_nixl
+RUN git clone --depth 1 --branch ${NIXL_REF} https://github.com/ai-dynamo/nixl.git && \
+    cd nixl && mkdir build && \
+    meson setup build/ --prefix=${NIXL_PREFIX} --libdir=lib64 --buildtype=release \
+        -Dcudapath_lib="${CUDA_HOME}/lib64" -Dcudapath_inc="${CUDA_HOME}/include" \
+        -Ducx_path="/usr/local/ucx" -Dlibfabric_path="/opt/amazon/efa" \
+        -Dbuild_tests=true -Dbuild_examples=true && \
+    cd build && ninja && ninja install && cd /workspace && rm -rf nixl
+RUN git clone --branch ${NCCL_VERSION} --depth 1 https://github.com/NVIDIA/nccl.git && \
+    cd nccl && make -j$(nproc) src.build \
+        NVCC_GENCODE="-gencode=arch=compute_80,code=sm_80 -gencode=arch=compute_90,code=sm_90 -gencode=arch=compute_100,code=sm_100" \
+        CUDA_HOME=${CUDA_HOME} BUILDDIR=/workspace/nccl-build && \
+    make install PREFIX=/usr/local/nccl BUILDDIR=/workspace/nccl-build && \
+    cd /workspace && rm -rf nccl nccl-build
+RUN curl -sL "https://dl.k8s.io/release/v1.35.4/bin/linux/amd64/kubectl" -o /usr/local/bin/kubectl && \
+    chmod +x /usr/local/bin/kubectl
 
 # ---------------------
 # TRT-LLM stage (intermediate — we harvest it into the combined stage)

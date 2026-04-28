@@ -1,32 +1,29 @@
 version: 0.2
 
 # ==============================================================================
-# CodeBuild spec — dynamo-inference app images (combined / efa / overlay)
+# CodeBuild spec — dynamo-inference (public-FROM-only, single project)
 # ==============================================================================
 #
-# Consumes networking-base:v5 from private ECR (produced by buildspec-base.yml)
-# and builds:
-#   - awsi-efa-base:<tag>                    (Dockerfile.efa)
-#   - awsi-dynamo-combined-efa:<tag>         (Dockerfile.dynamo-combined-efa)
+# Single CodeBuild project that builds awsi-efa-base + awsi-dynamo-combined-efa
+# entirely from public NGC sources (nvcr.io/nvidia/cuda-dl-base +
+# nvcr.io/nvidia/ai-dynamo/{trtllm,vllm}-runtime). No private registry pulls.
 #
-# Images are tagged with $CODEBUILD_RESOLVED_SOURCE_VERSION (git SHA) so every
-# commit is auditable. External trivy CVE scan + SBOM extraction run after push
-# and any CRITICAL finding without CVE_ALLOW_CRITICAL=1 fails the build — the
-# CodeBuild run doubles as the distribution-review gate.
+# The two-project split (buildspec-base + buildspec-app) is gone — after the
+# public-FROM-only rewrite there's no persistent `networking-base:v5` image
+# to cache, so splitting gives no cache benefit. The 25-min networking stage
+# is cached via BuildKit `--cache-from` against the previous ECR :latest tags.
 #
 # Prerequisites (set on the CodeBuild project):
-#   AWS_ACCOUNT_ID       058264135704
-#   AWS_DEFAULT_REGION   us-east-2
-#   ECR_REPO_PREFIX      ""        (or "dynamo-inference/")
-#   NETWORKING_BASE_URI  $ACCOUNT.dkr.ecr.$REGION.amazonaws.com/networking-base:v5
-#                        (or set BASE_PROJECT_NAME to pull from an exported artifact)
-#   CUDA_ARCH            90        (80=A100, 86=A10, 90=H100, 100=B200/B300)
-#   S3_SBOM_BUCKET       s3://bucket/path/                 (optional — SBOMs upload here if set)
-#   CVE_ALLOW_CRITICAL   0|1       (default 0 — set 1 to waive CRITICAL gate during a review)
+#   AWS_ACCOUNT_ID       e.g. 058264135704
+#   AWS_DEFAULT_REGION   e.g. us-east-2
+#   ECR_REPO_PREFIX      ""             (or e.g. "dynamo-inference/")
+#   CUDA_ARCH            90             (80=A100, 86=A10, 90=H100, 100=B200/B300)
+#   S3_SBOM_BUCKET       s3://bucket/path/   (optional — SBOMs upload here if set)
+#   CVE_ALLOW_CRITICAL   0|1            (default 0 — set 1 to waive CRITICAL gate)
 #
-# CodeBuild project settings required (see docs/CODEBUILD-SETUP.md):
+# CodeBuild project settings required (see ci/CODEBUILD-SETUP.md):
 #   ComputeType:      BUILD_GENERAL1_2XLARGE (72 vCPU / 145 GB / 824 GB SSD)
-#                     (combined image is 48 GB — LARGE will run out of disk)
+#                     (combined image is 48 GB — LARGE runs out of scratch)
 #   PrivilegedMode:   true
 #   ServiceRole:      ecr:*, logs:*, s3:PutObject to SBOM bucket
 
@@ -45,8 +42,6 @@ phases:
       - docker --version
       - aws --version
       - |
-        # Install trivy (for external CVE scan — in-Dockerfile scan has the
-        # --skip-db-update bug that produces empty reports).
         if ! command -v trivy >/dev/null 2>&1; then
           curl -sfL https://raw.githubusercontent.com/aquasecurity/trivy/main/contrib/install.sh \
             | sh -s -- -b /usr/local/bin v0.69.3
@@ -61,24 +56,16 @@ phases:
         export SHA="${CODEBUILD_RESOLVED_SOURCE_VERSION:0:12}"
         export EFA_URI="${ECR}/${ECR_REPO_PREFIX}awsi-efa-base:${SHA}"
         export COMBINED_URI="${ECR}/${ECR_REPO_PREFIX}awsi-dynamo-combined-efa:${SHA}"
-        echo "ECR registry:     ${ECR}"
-        echo "Git SHA (short):  ${SHA}"
-        echo "NETWORKING_BASE:  ${NETWORKING_BASE_URI}"
-        echo "efa-base target:  ${EFA_URI}"
-        echo "combined target:  ${COMBINED_URI}"
-        if [ -z "${NETWORKING_BASE_URI:-}" ]; then
-          echo "✗ NETWORKING_BASE_URI is not set. Run buildspec-base.yml first or set it on the project."
-          exit 1
-        fi
+        echo "ECR:                ${ECR}"
+        echo "Git SHA (short):    ${SHA}"
+        echo "efa-base target:    ${EFA_URI}"
+        echo "combined target:    ${COMBINED_URI}"
 
       - echo "[pre_build] Logging in to ECR..."
       - aws ecr get-login-password --region "${AWS_DEFAULT_REGION}"
           | docker login --username AWS --password-stdin "${ECR}"
 
-      - echo "[pre_build] Pulling networking-base..."
-      - docker pull "${NETWORKING_BASE_URI}"
-
-      - echo "[pre_build] Ensuring app ECR repos exist..."
+      - echo "[pre_build] Ensuring ECR repos exist..."
       - |
         for repo in "${ECR_REPO_PREFIX}awsi-efa-base" "${ECR_REPO_PREFIX}awsi-dynamo-combined-efa"; do
           aws ecr describe-repositories --repository-names "$repo" \
@@ -89,7 +76,7 @@ phases:
                  --encryption-configuration encryptionType=AES256
         done
 
-      - echo "[pre_build] Pulling previous versions (BuildKit inline cache)..."
+      - echo "[pre_build] Pulling previous :latest for BuildKit inline cache..."
       - |
         for uri in \
             "${ECR}/${ECR_REPO_PREFIX}awsi-efa-base:latest" \
@@ -101,19 +88,17 @@ phases:
     commands:
       - cd 2.projects/dynamo-inference
 
-      - echo "[build] Building awsi-efa-base..."
+      - echo "[build] Building awsi-efa-base (from public cuda-dl-base)..."
       - |
         DOCKER_BUILDKIT=1 ./build.sh \
-          --networking-base "${NETWORKING_BASE_URI}" \
           -b efa \
           -a "${CUDA_ARCH}" \
           -t "${SHA}" \
           --no-extract
 
-      - echo "[build] Building awsi-dynamo-combined-efa..."
+      - echo "[build] Building awsi-dynamo-combined-efa (public FROM chain)..."
       - |
         DOCKER_BUILDKIT=1 ./build.sh \
-          --networking-base "${NETWORKING_BASE_URI}" \
           -b combined \
           -a "${CUDA_ARCH}" \
           -t "${SHA}" \
@@ -182,20 +167,18 @@ phases:
           aws s3 cp --recursive cve-reports/  "${S3_SBOM_BUCKET}/${SHA}/cve/"      || true
           echo "  uploaded to ${S3_SBOM_BUCKET}/${SHA}/"
         else
-          echo "  S3_SBOM_BUCKET not set — skipping upload (artifacts still attached to build)"
+          echo "  S3_SBOM_BUCKET not set — skipping upload (artifacts still attached)"
         fi
 
       - echo "=== Build summary ==="
       - echo "  efa-base:       ${EFA_URI}"
       - echo "  combined-efa:   ${COMBINED_URI}"
-      - echo "  cve reports:    ./cve-reports/"
-      - echo "  sbom artifacts: ./sbom-out/"
 
 artifacts:
   files:
     - cve-reports/**/*
     - sbom-out/**/*
-  name: app-build-$CODEBUILD_RESOLVED_SOURCE_VERSION
+  name: dynamo-inference-build-$CODEBUILD_RESOLVED_SOURCE_VERSION
 
 cache:
   paths:
