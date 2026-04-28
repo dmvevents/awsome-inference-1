@@ -18,6 +18,13 @@ CVE_SCAN=1
 SBOM_OUT_DIR="$(pwd)/out/sbom"
 EXTRACT_SBOM=1
 
+# NETWORKING_BASE must be supplied explicitly. The Dockerfiles declare
+# `ARG NETWORKING_BASE` with NO default (option A, per Alex 2026-04-28),
+# so a missing value makes the docker build fail fast. Set via:
+#   --networking-base <your-registry>/networking-base:v5
+# or the NETWORKING_BASE environment variable.
+NETWORKING_BASE="${NETWORKING_BASE:-}"
+
 # Colors for output
 RED='\033[0;31m'
 GREEN='\033[0;32m'
@@ -40,15 +47,16 @@ print_usage() {
     echo "      --no-cve              Disable CVE scan (default: enabled)"
     echo "      --no-extract          Skip post-build SBOM extraction to out/sbom/"
     echo "      --sbom-out DIR        Output dir for extracted SBOMs (default: ./out/sbom)"
+    echo "      --networking-base URI URI of the pre-built networking-base image"
+    echo "                            (REQUIRED — Dockerfiles now fail without it)."
+    echo "                            Also settable via NETWORKING_BASE env var."
     echo "  -h, --help                Show this help message"
     echo ""
     echo "Examples:"
-    echo "  $0                                    # Build all images locally"
-    echo "  $0 -b efa                             # Build only base EFA image"
-    echo "  $0 -b efa -a 90                       # Build base EFA image for H100 GPUs"
-    echo "  $0 -b trtllm -a 80                    # Build TensorRT-LLM for A100 GPUs"
-    echo "  $0 -r public.ecr.aws/v9l4g5s4 -p     # Build and push to ECR"
-    echo "  $0 -t v1.0.0 -p -a 86                 # Build for A10 GPUs with specific tag and push"
+    echo "  NETWORKING_BASE=\$ACCOUNT.dkr.ecr.\$REGION.amazonaws.com/networking-base:v5 \\"
+    echo "     $0 -b combined -a 90 -t v1.0.0      # CodeBuild-style: ECR base, H100 target"
+    echo "  $0 --networking-base networking-base:v5 -b efa -a 90     # local dev build"
+    echo "  $0 --networking-base networking-base:v5 -r 123.dkr.ecr.us-east-2.amazonaws.com -p  # build + push to private ECR"
 }
 
 log_info() {
@@ -94,6 +102,7 @@ while [[ $# -gt 0 ]]; do
         --no-cve) CVE_SCAN=0; shift ;;
         --no-extract) EXTRACT_SBOM=0; shift ;;
         --sbom-out) SBOM_OUT_DIR="$2"; shift 2 ;;
+        --networking-base) NETWORKING_BASE="$2"; shift 2 ;;
         -h|--help)
             print_usage
             exit 0
@@ -115,6 +124,21 @@ fi
 # SBOM build-args. The multi-stage Dockerfiles honor GENERATE_SBOM and CVE_SCAN.
 SBOM_ARGS="--build-arg GENERATE_SBOM=${GENERATE_SBOM} --build-arg CVE_SCAN=${CVE_SCAN}"
 SBOM_TARGET_ARG="--target final"
+
+# Required: NETWORKING_BASE — the Dockerfiles no longer carry a default.
+if [ -z "${NETWORKING_BASE}" ]; then
+    log_error "NETWORKING_BASE is required. Pass --networking-base <URI> or set env var."
+    log_error "  Build it first from the awesome-inferencing repo:"
+    log_error "    docker build -t efa-rdma-base:v1 base/efa-rdma-base/"
+    log_error "    docker build -t networking-base:v5 base/networking-base/"
+    log_error "  Or pull from your private ECR:"
+    log_error "    aws ecr get-login-password --region \$REGION | docker login --username AWS \\"
+    log_error "        --password-stdin \$ACCOUNT.dkr.ecr.\$REGION.amazonaws.com"
+    log_error "    docker pull \$ACCOUNT.dkr.ecr.\$REGION.amazonaws.com/networking-base:v5"
+    exit 1
+fi
+log_info "Using NETWORKING_BASE=${NETWORKING_BASE}"
+NETWORKING_BASE_ARG="--build-arg NETWORKING_BASE=${NETWORKING_BASE}"
 
 extract_sbom() {
     local img="$1"
@@ -171,6 +195,7 @@ build_efa() {
     fi
 
     docker build ${CACHE_OPT} ${ARCH_ARG} ${SBOM_ARGS} ${SBOM_TARGET_ARG} \
+        ${NETWORKING_BASE_ARG} \
         -f Dockerfile.efa \
         -t ${IMAGE_NAME}:${TAG} \
         .
@@ -202,6 +227,7 @@ build_trtllm() {
     fi
 
     docker build ${CACHE_OPT} ${ARCH_ARG} ${SBOM_ARGS} ${SBOM_TARGET_ARG} \
+        ${NETWORKING_BASE_ARG} \
         -f Dockerfile.dynamo-trtllm-efa \
         --build-arg BASE_IMAGE=${BASE_IMAGE}:${TAG} \
         -t ${IMAGE_NAME}:${TAG} \
@@ -234,6 +260,7 @@ build_vllm() {
     fi
 
     docker build ${CACHE_OPT} ${ARCH_ARG} ${SBOM_ARGS} ${SBOM_TARGET_ARG} \
+        ${NETWORKING_BASE_ARG} \
         -f Dockerfile.dynamo-vllm-efa \
         --build-arg BASE_IMAGE=${BASE_IMAGE}:${TAG} \
         -t ${IMAGE_NAME}:${TAG} \
@@ -267,6 +294,7 @@ build_combined() {
     fi
 
     docker build ${CACHE_OPT} ${ARCH_ARG} ${SBOM_ARGS} ${SBOM_TARGET_ARG} \
+        ${NETWORKING_BASE_ARG} \
         -f Dockerfile.dynamo-combined-efa \
         --build-arg BASE_IMAGE=${BASE_IMAGE}:${TAG} \
         -t ${IMAGE_NAME}:${TAG} \

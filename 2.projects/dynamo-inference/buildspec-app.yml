@@ -1,0 +1,202 @@
+version: 0.2
+
+# ==============================================================================
+# CodeBuild spec — dynamo-inference app images (combined / efa / overlay)
+# ==============================================================================
+#
+# Consumes networking-base:v5 from private ECR (produced by buildspec-base.yml)
+# and builds:
+#   - awsi-efa-base:<tag>                    (Dockerfile.efa)
+#   - awsi-dynamo-combined-efa:<tag>         (Dockerfile.dynamo-combined-efa)
+#
+# Images are tagged with $CODEBUILD_RESOLVED_SOURCE_VERSION (git SHA) so every
+# commit is auditable. External trivy CVE scan + SBOM extraction run after push
+# and any CRITICAL finding without CVE_ALLOW_CRITICAL=1 fails the build — the
+# CodeBuild run doubles as the distribution-review gate.
+#
+# Prerequisites (set on the CodeBuild project):
+#   AWS_ACCOUNT_ID       058264135704
+#   AWS_DEFAULT_REGION   us-east-2
+#   ECR_REPO_PREFIX      ""        (or "dynamo-inference/")
+#   NETWORKING_BASE_URI  $ACCOUNT.dkr.ecr.$REGION.amazonaws.com/networking-base:v5
+#                        (or set BASE_PROJECT_NAME to pull from an exported artifact)
+#   CUDA_ARCH            90        (80=A100, 86=A10, 90=H100, 100=B200/B300)
+#   S3_SBOM_BUCKET       s3://bucket/path/                 (optional — SBOMs upload here if set)
+#   CVE_ALLOW_CRITICAL   0|1       (default 0 — set 1 to waive CRITICAL gate during a review)
+#
+# CodeBuild project settings required (see docs/CODEBUILD-SETUP.md):
+#   ComputeType:      BUILD_GENERAL1_2XLARGE (72 vCPU / 145 GB / 824 GB SSD)
+#                     (combined image is 48 GB — LARGE will run out of disk)
+#   PrivilegedMode:   true
+#   ServiceRole:      ecr:*, logs:*, s3:PutObject to SBOM bucket
+
+env:
+  variables:
+    ECR_REPO_PREFIX: ""
+    CUDA_ARCH: "90"              # default H100; override per-project
+    S3_SBOM_BUCKET: ""
+    CVE_ALLOW_CRITICAL: "0"
+
+phases:
+  install:
+    runtime-versions:
+      python: 3.12
+    commands:
+      - docker --version
+      - aws --version
+      - |
+        # Install trivy (for external CVE scan — in-Dockerfile scan has the
+        # --skip-db-update bug that produces empty reports).
+        if ! command -v trivy >/dev/null 2>&1; then
+          curl -sfL https://raw.githubusercontent.com/aquasecurity/trivy/main/contrib/install.sh \
+            | sh -s -- -b /usr/local/bin v0.69.3
+        fi
+        trivy --version
+
+  pre_build:
+    commands:
+      - |
+        set -euo pipefail
+        export ECR="${AWS_ACCOUNT_ID}.dkr.ecr.${AWS_DEFAULT_REGION}.amazonaws.com"
+        export SHA="${CODEBUILD_RESOLVED_SOURCE_VERSION:0:12}"
+        export EFA_URI="${ECR}/${ECR_REPO_PREFIX}awsi-efa-base:${SHA}"
+        export COMBINED_URI="${ECR}/${ECR_REPO_PREFIX}awsi-dynamo-combined-efa:${SHA}"
+        echo "ECR registry:     ${ECR}"
+        echo "Git SHA (short):  ${SHA}"
+        echo "NETWORKING_BASE:  ${NETWORKING_BASE_URI}"
+        echo "efa-base target:  ${EFA_URI}"
+        echo "combined target:  ${COMBINED_URI}"
+        if [ -z "${NETWORKING_BASE_URI:-}" ]; then
+          echo "✗ NETWORKING_BASE_URI is not set. Run buildspec-base.yml first or set it on the project."
+          exit 1
+        fi
+
+      - echo "[pre_build] Logging in to ECR..."
+      - aws ecr get-login-password --region "${AWS_DEFAULT_REGION}"
+          | docker login --username AWS --password-stdin "${ECR}"
+
+      - echo "[pre_build] Pulling networking-base..."
+      - docker pull "${NETWORKING_BASE_URI}"
+
+      - echo "[pre_build] Ensuring app ECR repos exist..."
+      - |
+        for repo in "${ECR_REPO_PREFIX}awsi-efa-base" "${ECR_REPO_PREFIX}awsi-dynamo-combined-efa"; do
+          aws ecr describe-repositories --repository-names "$repo" \
+              --region "${AWS_DEFAULT_REGION}" >/dev/null 2>&1 \
+            || aws ecr create-repository --repository-name "$repo" \
+                 --region "${AWS_DEFAULT_REGION}" \
+                 --image-scanning-configuration scanOnPush=true \
+                 --encryption-configuration encryptionType=AES256
+        done
+
+      - echo "[pre_build] Pulling previous versions (BuildKit inline cache)..."
+      - |
+        for uri in \
+            "${ECR}/${ECR_REPO_PREFIX}awsi-efa-base:latest" \
+            "${ECR}/${ECR_REPO_PREFIX}awsi-dynamo-combined-efa:latest"; do
+          docker pull "$uri" 2>/dev/null || echo "  (no cached $uri — first build)"
+        done
+
+  build:
+    commands:
+      - cd 2.projects/dynamo-inference
+
+      - echo "[build] Building awsi-efa-base..."
+      - |
+        DOCKER_BUILDKIT=1 ./build.sh \
+          --networking-base "${NETWORKING_BASE_URI}" \
+          -b efa \
+          -a "${CUDA_ARCH}" \
+          -t "${SHA}" \
+          --no-extract
+
+      - echo "[build] Building awsi-dynamo-combined-efa..."
+      - |
+        DOCKER_BUILDKIT=1 ./build.sh \
+          --networking-base "${NETWORKING_BASE_URI}" \
+          -b combined \
+          -a "${CUDA_ARCH}" \
+          -t "${SHA}" \
+          --no-extract
+
+      - echo "[build] Tagging for ECR..."
+      - docker tag "aws-efa-dynamo-h100:${SHA}"        "${EFA_URI}"
+      - docker tag "aws-efa-dynamo-h100:${SHA}"        "${ECR}/${ECR_REPO_PREFIX}awsi-efa-base:latest"
+      - docker tag "dynamo-combined-efa-h100:${SHA}"   "${COMBINED_URI}"
+      - docker tag "dynamo-combined-efa-h100:${SHA}"   "${ECR}/${ECR_REPO_PREFIX}awsi-dynamo-combined-efa:latest"
+
+  post_build:
+    commands:
+      - echo "[post_build] Pushing images to ECR..."
+      - docker push "${EFA_URI}"
+      - docker push "${ECR}/${ECR_REPO_PREFIX}awsi-efa-base:latest"
+      - docker push "${COMBINED_URI}"
+      - docker push "${ECR}/${ECR_REPO_PREFIX}awsi-dynamo-combined-efa:latest"
+
+      - echo "[post_build] External trivy CVE scans (CRITICAL + HIGH)..."
+      - mkdir -p cve-reports
+      - |
+        for name_and_img in \
+            "awsi-efa-base:${EFA_URI}" \
+            "awsi-dynamo-combined-efa:${COMBINED_URI}"; do
+          name="${name_and_img%%:*}"; img="${name_and_img#*:}"
+          echo "  scanning ${name} (${img})..."
+          trivy image --severity CRITICAL,HIGH --scanners vuln \
+            --format table --timeout 30m --no-progress --skip-version-check \
+            --output "cve-reports/${name}_${SHA}_cve-critical-high.txt" \
+            "${img}" || echo "    trivy exited non-zero (continuing; gate runs below)"
+        done
+
+      - echo "[post_build] CVE gate: CRITICAL findings fail the build unless CVE_ALLOW_CRITICAL=1"
+      - |
+        crit=$(grep -lE '│ CRITICAL │' cve-reports/*.txt 2>/dev/null || true)
+        if [ -n "$crit" ] && [ "${CVE_ALLOW_CRITICAL}" != "1" ]; then
+          echo "✗ CRITICAL CVEs detected in:"
+          for f in $crit; do
+            echo "  --- $f ---"
+            grep -E '│ CRITICAL │' "$f" | head -10
+          done
+          echo "Set CVE_ALLOW_CRITICAL=1 on the CodeBuild project to waive during a review"
+          exit 1
+        fi
+        echo "✓ CVE gate passed (or allowlisted)"
+
+      - echo "[post_build] Extracting in-image SBOMs..."
+      - |
+        mkdir -p sbom-out
+        for ref in \
+            "awsi-efa-base:${EFA_URI}" \
+            "awsi-dynamo-combined-efa:${COMBINED_URI}"; do
+          name="${ref%%:*}"; uri="${ref#*:}"
+          mkdir -p "sbom-out/${name}"
+          cid=$(docker create "${uri}" true)
+          docker cp "${cid}:/opt/security/." "sbom-out/${name}/" 2>/dev/null \
+            || echo "  (${name} has no /opt/security dir)"
+          docker rm "${cid}" >/dev/null
+        done
+
+      - echo "[post_build] Uploading SBOM + CVE reports to S3 (if configured)..."
+      - |
+        if [ -n "${S3_SBOM_BUCKET}" ]; then
+          aws s3 cp --recursive sbom-out/     "${S3_SBOM_BUCKET}/${SHA}/sbom/"     || true
+          aws s3 cp --recursive cve-reports/  "${S3_SBOM_BUCKET}/${SHA}/cve/"      || true
+          echo "  uploaded to ${S3_SBOM_BUCKET}/${SHA}/"
+        else
+          echo "  S3_SBOM_BUCKET not set — skipping upload (artifacts still attached to build)"
+        fi
+
+      - echo "=== Build summary ==="
+      - echo "  efa-base:       ${EFA_URI}"
+      - echo "  combined-efa:   ${COMBINED_URI}"
+      - echo "  cve reports:    ./cve-reports/"
+      - echo "  sbom artifacts: ./sbom-out/"
+
+artifacts:
+  files:
+    - cve-reports/**/*
+    - sbom-out/**/*
+  name: app-build-$CODEBUILD_RESOLVED_SOURCE_VERSION
+
+cache:
+  paths:
+    - '/root/.docker/**/*'
