@@ -44,7 +44,7 @@
 # shipping image with integrated SBOM + CVE scanning is
 # Dockerfile.dynamo-combined-efa (see sibling file).
 #
-ARG NETWORKING_BASE=public.ecr.aws/v9l4g5s4/networking-base:v5
+ARG NETWORKING_BASE
 ARG TRTLLM_IMAGE=nvcr.io/nvidia/ai-dynamo/tensorrtllm-runtime:1.0.1
 ARG VLLM_IMAGE=nvcr.io/nvidia/ai-dynamo/vllm-runtime:1.0.1
 

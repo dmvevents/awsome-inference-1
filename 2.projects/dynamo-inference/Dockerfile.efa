@@ -29,7 +29,7 @@
 #
 # =============================================================================
 
-ARG NETWORKING_BASE=public.ecr.aws/v9l4g5s4/networking-base:v5
+ARG NETWORKING_BASE
 
 # ---------------------
 # Stage 1: networking source
