@@ -47,7 +47,7 @@ phases:
 
   build:
     commands:
-      - cd 2.projects/dynamo-inference
+      - cd "${CODEBUILD_SRC_DIR}/2.projects/dynamo-inference"
       - DOCKER_BUILDKIT=1 ./build.sh -b efa      -a "${CUDA_ARCH}" -t "${SHA}" --no-extract
       - DOCKER_BUILDKIT=1 ./build.sh -b combined -a "${CUDA_ARCH}" -t "${SHA}" --no-extract
       - docker tag "aws-efa-dynamo-h100:${SHA}"      "${EFA_URI}"
@@ -57,7 +57,11 @@ phases:
 
   post_build:
     commands:
-      - cd 2.projects/dynamo-inference
+      - export ECR="${AWS_ACCOUNT_ID}.dkr.ecr.${AWS_DEFAULT_REGION}.amazonaws.com"
+      - export SHA="${CODEBUILD_RESOLVED_SOURCE_VERSION:0:12}"
+      - export EFA_URI="${ECR}/${ECR_REPO_PREFIX}awsi-efa-base:${SHA}"
+      - export COMBINED_URI="${ECR}/${ECR_REPO_PREFIX}awsi-dynamo-combined-efa:${SHA}"
+      - cd "${CODEBUILD_SRC_DIR}/2.projects/dynamo-inference"
       - chmod +x ci/codebuild-post-build.sh
       - ./ci/codebuild-post-build.sh
 
