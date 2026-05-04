@@ -15,15 +15,15 @@ S3_SBOM_BUCKET="${S3_SBOM_BUCKET:-}"
 
 echo "[post_build] Pushing images to ECR..."
 docker push "${EFA_URI}"
-docker push "${ECR}/${ECR_REPO_PREFIX}awsi-efa-base:latest"
+docker push "${ECR}/${ECR_REPO_PREFIX}efa:latest"
 docker push "${COMBINED_URI}"
-docker push "${ECR}/${ECR_REPO_PREFIX}awsi-dynamo-combined-efa:latest"
+docker push "${ECR}/${ECR_REPO_PREFIX}dynamo-efa:latest"
 
 echo "[post_build] External trivy CVE scans (CRITICAL + HIGH)..."
 mkdir -p cve-reports
 for name_and_img in \
-    "awsi-efa-base:${EFA_URI}" \
-    "awsi-dynamo-combined-efa:${COMBINED_URI}"; do
+    "efa:${EFA_URI}" \
+    "dynamo-efa:${COMBINED_URI}"; do
   name="${name_and_img%%:*}"
   img="${name_and_img#*:}"
   echo "  scanning ${name} (${img})..."
@@ -49,8 +49,8 @@ echo "CVE gate passed (or allowlisted)"
 echo "[post_build] Extracting in-image SBOMs..."
 mkdir -p sbom-out
 for ref in \
-    "awsi-efa-base:${EFA_URI}" \
-    "awsi-dynamo-combined-efa:${COMBINED_URI}"; do
+    "efa:${EFA_URI}" \
+    "dynamo-efa:${COMBINED_URI}"; do
   name="${ref%%:*}"
   uri="${ref#*:}"
   mkdir -p "sbom-out/${name}"
@@ -70,5 +70,5 @@ else
 fi
 
 echo "=== Build summary ==="
-echo "  efa-base:     ${EFA_URI}"
-echo "  combined-efa: ${COMBINED_URI}"
+echo "  efa:        ${EFA_URI}"
+echo "  dynamo-efa: ${COMBINED_URI}"

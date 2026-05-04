@@ -16,9 +16,11 @@ version: 0.2
 env:
   variables:
     ECR_REPO_PREFIX: ""
-    CUDA_ARCH: "90"
     S3_SBOM_BUCKET: ""
     CVE_ALLOW_CRITICAL: "0"
+    # CUDA_ARCH removed in 2026-05-04 Alex rename: shipping images are now
+    # fat binaries covering sm80..sm120 (A100 → B300 + L40S). A single image
+    # per build step.
 
 phases:
   install:
@@ -34,33 +36,35 @@ phases:
     commands:
       - export ECR="${AWS_ACCOUNT_ID}.dkr.ecr.${AWS_DEFAULT_REGION}.amazonaws.com"
       - export SHA="${CODEBUILD_RESOLVED_SOURCE_VERSION:0:12}"
-      - export EFA_URI="${ECR}/${ECR_REPO_PREFIX}awsi-efa-base:${SHA}"
-      - export COMBINED_URI="${ECR}/${ECR_REPO_PREFIX}awsi-dynamo-combined-efa:${SHA}"
+      - export EFA_URI="${ECR}/${ECR_REPO_PREFIX}efa:${SHA}"
+      - export COMBINED_URI="${ECR}/${ECR_REPO_PREFIX}dynamo-efa:${SHA}"
       - 'echo "ECR=${ECR} SHA=${SHA}"'
-      - 'echo "efa-base target: ${EFA_URI}"'
-      - 'echo "combined target: ${COMBINED_URI}"'
+      - 'echo "efa target: ${EFA_URI}"'
+      - 'echo "dynamo-efa target: ${COMBINED_URI}"'
       - aws ecr get-login-password --region "${AWS_DEFAULT_REGION}" | docker login --username AWS --password-stdin "${ECR}"
-      - aws ecr describe-repositories --repository-names "${ECR_REPO_PREFIX}awsi-efa-base"            --region "${AWS_DEFAULT_REGION}" >/dev/null 2>&1 || aws ecr create-repository --repository-name "${ECR_REPO_PREFIX}awsi-efa-base"            --region "${AWS_DEFAULT_REGION}" --image-scanning-configuration scanOnPush=true --encryption-configuration encryptionType=AES256
-      - aws ecr describe-repositories --repository-names "${ECR_REPO_PREFIX}awsi-dynamo-combined-efa" --region "${AWS_DEFAULT_REGION}" >/dev/null 2>&1 || aws ecr create-repository --repository-name "${ECR_REPO_PREFIX}awsi-dynamo-combined-efa" --region "${AWS_DEFAULT_REGION}" --image-scanning-configuration scanOnPush=true --encryption-configuration encryptionType=AES256
-      - docker pull "${ECR}/${ECR_REPO_PREFIX}awsi-efa-base:latest"            2>/dev/null || echo "  no cached efa-base — first build"
-      - docker pull "${ECR}/${ECR_REPO_PREFIX}awsi-dynamo-combined-efa:latest" 2>/dev/null || echo "  no cached combined — first build"
+      - aws ecr describe-repositories --repository-names "${ECR_REPO_PREFIX}efa"         --region "${AWS_DEFAULT_REGION}" >/dev/null 2>&1 || aws ecr create-repository --repository-name "${ECR_REPO_PREFIX}efa"         --region "${AWS_DEFAULT_REGION}" --image-scanning-configuration scanOnPush=true --encryption-configuration encryptionType=AES256
+      - aws ecr describe-repositories --repository-names "${ECR_REPO_PREFIX}dynamo-efa"  --region "${AWS_DEFAULT_REGION}" >/dev/null 2>&1 || aws ecr create-repository --repository-name "${ECR_REPO_PREFIX}dynamo-efa"  --region "${AWS_DEFAULT_REGION}" --image-scanning-configuration scanOnPush=true --encryption-configuration encryptionType=AES256
+      - docker pull "${ECR}/${ECR_REPO_PREFIX}efa:latest"        2>/dev/null || echo "  no cached efa — first build"
+      - docker pull "${ECR}/${ECR_REPO_PREFIX}dynamo-efa:latest" 2>/dev/null || echo "  no cached dynamo-efa — first build"
 
   build:
     commands:
       - cd "${CODEBUILD_SRC_DIR}/2.projects/dynamo-inference"
-      - DOCKER_BUILDKIT=1 ./build.sh -b efa      -a "${CUDA_ARCH}" -t "${SHA}" --no-extract
-      - DOCKER_BUILDKIT=1 ./build.sh -b combined -a "${CUDA_ARCH}" -t "${SHA}" --no-extract
-      - docker tag "aws-efa-dynamo-h100:${SHA}"      "${EFA_URI}"
-      - docker tag "aws-efa-dynamo-h100:${SHA}"      "${ECR}/${ECR_REPO_PREFIX}awsi-efa-base:latest"
-      - docker tag "dynamo-combined-efa-h100:${SHA}" "${COMBINED_URI}"
-      - docker tag "dynamo-combined-efa-h100:${SHA}" "${ECR}/${ECR_REPO_PREFIX}awsi-dynamo-combined-efa:latest"
+      - DOCKER_BUILDKIT=1 ./build.sh -b efa      -t "${SHA}" --no-extract
+      # Alex 2026-05-04: combined build reuses the efa image built above via
+      # --base-image to avoid the 25-min network-stack recompile.
+      - DOCKER_BUILDKIT=1 ./build.sh -b combined -t "${SHA}" --no-extract --base-image "efa:${SHA}"
+      - docker tag "efa:${SHA}"        "${EFA_URI}"
+      - docker tag "efa:${SHA}"        "${ECR}/${ECR_REPO_PREFIX}efa:latest"
+      - docker tag "dynamo-efa:${SHA}" "${COMBINED_URI}"
+      - docker tag "dynamo-efa:${SHA}" "${ECR}/${ECR_REPO_PREFIX}dynamo-efa:latest"
 
   post_build:
     commands:
       - export ECR="${AWS_ACCOUNT_ID}.dkr.ecr.${AWS_DEFAULT_REGION}.amazonaws.com"
       - export SHA="${CODEBUILD_RESOLVED_SOURCE_VERSION:0:12}"
-      - export EFA_URI="${ECR}/${ECR_REPO_PREFIX}awsi-efa-base:${SHA}"
-      - export COMBINED_URI="${ECR}/${ECR_REPO_PREFIX}awsi-dynamo-combined-efa:${SHA}"
+      - export EFA_URI="${ECR}/${ECR_REPO_PREFIX}efa:${SHA}"
+      - export COMBINED_URI="${ECR}/${ECR_REPO_PREFIX}dynamo-efa:${SHA}"
       - cd "${CODEBUILD_SRC_DIR}/2.projects/dynamo-inference"
       - chmod +x ci/codebuild-post-build.sh
       - ./ci/codebuild-post-build.sh

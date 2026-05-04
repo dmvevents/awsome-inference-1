@@ -196,7 +196,7 @@ RUN git clone --depth 1 --branch ${NIXL_REF} https://github.com/ai-dynamo/nixl.g
 RUN git clone --branch ${NCCL_VERSION} --depth 1 https://github.com/NVIDIA/nccl.git && \
     cd nccl && \
     make -j$(nproc) src.build \
-        NVCC_GENCODE="-gencode=arch=compute_80,code=sm_80 -gencode=arch=compute_90,code=sm_90 -gencode=arch=compute_100,code=sm_100" \
+        NVCC_GENCODE="-gencode=arch=compute_80,code=sm_80 -gencode=arch=compute_86,code=sm_86 -gencode=arch=compute_89,code=sm_89 -gencode=arch=compute_90,code=sm_90 -gencode=arch=compute_100,code=sm_100 -gencode=arch=compute_120,code=sm_120" \
         CUDA_HOME=${CUDA_HOME} \
         BUILDDIR=/workspace/nccl-build && \
     make install PREFIX=/usr/local/nccl BUILDDIR=/workspace/nccl-build && \
