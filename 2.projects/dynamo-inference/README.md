@@ -486,6 +486,38 @@ kubectl rollout restart deployment/dynamo-disaggregated-backend-decode
 
 ---
 
+## Testing
+
+On-cluster smoke harness: `tests/smoke/smoke.sh`. Every CodeBuild push should
+be validated by running it against the resulting image tag.
+
+```
+cd 2.projects/dynamo-inference
+./tests/smoke/smoke.sh <SHA>
+```
+
+The harness runs **10 gates** (T1–T10) against a single-pod vLLM deployment
+on the H100 HyperPod cluster. Full criteria, env overrides, evidence
+artifacts, and troubleshooting are documented in
+[`tests/README.md`](tests/README.md).
+
+**Blocking gates (T1–T7):** image exists in ECR, size sanity, fat-binary
+NCCL with `sm_80 / sm_86 / sm_89 / sm_90 / sm_100 / sm_120`, EFA visible in
+the pod, `/v1/models` returns 200, `/v1/completions` succeeds, `hw_counters`
+show non-zero RDMA traffic (guards against TCP fallback).
+
+**Warning gates (T8–T10):** no NCCL/NVLS errors in logs, SBOM present at
+`/opt/security/`, pod teardown completes within 60 s.
+
+Runs target `ml.p5.48xlarge` only (H100); P5en H200 nodes are reserved.
+The harness claims `~/.claude/cluster-lock-h100.json` before deploy and
+releases it via `trap` on exit.
+
+Per-run evidence lands in `tests/out/<SHA>/` (logs, NCCL arches, hw_counters,
+completion JSON, and `summary.md`).
+
+---
+
 ## Troubleshooting
 
 ### Common Issues
