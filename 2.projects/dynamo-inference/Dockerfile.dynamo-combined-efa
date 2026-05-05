@@ -175,6 +175,15 @@ RUN git clone --branch ${NCCL_VERSION} --depth 1 https://github.com/NVIDIA/nccl.
     make install PREFIX=/usr/local/nccl BUILDDIR=/workspace/nccl-build && \
     cd /workspace && rm -rf nccl nccl-build
 
+# nccl-tests v2.18.2 — bandwidth benches (all_reduce_perf, all_gather_perf, etc).
+# Not in upstream nccl install; built from source here so /opt/nccl-tests/bin
+# ships in the final combined image. Used by docs/evidence/multinode-*/t11.
+RUN git clone --branch v2.18.2 --depth 1 https://github.com/NVIDIA/nccl-tests.git && \
+    cd nccl-tests && \
+    make -j$(nproc) NCCL_HOME=/usr/local/nccl CUDA_HOME=${CUDA_HOME} MPI=0 && \
+    mkdir -p /opt/nccl-tests/bin && cp -r build/* /opt/nccl-tests/bin/ && \
+    cd /workspace && rm -rf nccl-tests
+
 RUN curl -sL "https://dl.k8s.io/release/v1.35.4/bin/linux/amd64/kubectl" -o /usr/local/bin/kubectl && \
     chmod +x /usr/local/bin/kubectl
 
