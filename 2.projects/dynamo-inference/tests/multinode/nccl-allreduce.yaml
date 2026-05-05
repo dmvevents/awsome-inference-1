@@ -48,7 +48,7 @@ spec:
           emptyDir: { medium: HugePages }
       containers:
         - name: nccl
-          image: 058264135704.dkr.ecr.us-east-2.amazonaws.com/dynamo-efa:d35812db45d6
+          image: 058264135704.dkr.ecr.us-east-2.amazonaws.com/dynamo-efa:a1725d43e5c0
           imagePullPolicy: IfNotPresent
           securityContext:
             capabilities:
