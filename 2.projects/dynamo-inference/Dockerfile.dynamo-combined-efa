@@ -237,6 +237,10 @@ COPY --from=networking /opt/amazon/efa         /opt/amazon/efa
 COPY --from=networking /opt/amazon/aws-ofi-nccl /opt/amazon/aws-ofi-nccl
 COPY --from=networking /opt/nvidia/nvda_nixl   /opt/nvidia/nvda_nixl
 COPY --from=networking /usr/local/nccl         /usr/local/nccl
+# nccl-tests (all_reduce_perf, all_gather_perf, etc.) — lets cross-node
+# bandwidth benches run without installing anything extra. 2026-05-05 multinode
+# T11 needed these and they were only in the efa base, not combined.
+COPY --from=networking /opt/nccl-tests         /opt/nccl-tests
 
 COPY --from=networking /lib/x86_64-linux-gnu/libefa.so*      /lib/x86_64-linux-gnu/
 COPY --from=networking /lib/x86_64-linux-gnu/libibverbs.so*  /lib/x86_64-linux-gnu/
@@ -322,8 +326,21 @@ WORKDIR /workspace
 COPY entrypoint.sh /usr/local/bin/dynamo-combined-entrypoint
 RUN chmod +x /usr/local/bin/dynamo-combined-entrypoint
 
-ENV LD_LIBRARY_PATH="/opt/nvidia/nvda_nixl/lib64:/opt/nvidia/nvda_nixl/lib64/plugins:/usr/local/ucx/lib:/opt/amazon/efa/lib:/opt/amazon/aws-ofi-nccl/lib:/usr/local/nccl/lib:/opt/gdrcopy/lib:${LD_LIBRARY_PATH:-}" \
-    PATH="/usr/local/ucx/bin:/opt/amazon/efa/bin:${PATH}" \
+# NIXL plugin discovery — override the source-built path from networking-builder
+# stage. At runtime, Dynamo's vLLM workers use the pip-installed nixl-cu12 1.0.1
+# wheel, whose plugins live INSIDE the /opt/dynamo/venv site-packages. The NIXL
+# loader reads NIXL_PLUGIN_DIR (singular) from nixl_plugin_manager.cpp:278. The
+# canonical wheel plugin path is .nixl_cu12.mesonpy.libs/plugins/ because the
+# NIXL core libnixl.so sits in .nixl_cu12.mesonpy.libs/ and the loader falls back
+# to dladdr(&getPluginDir) + "/plugins" when the env var is unset. Setting the
+# env explicitly removes ambiguity.
+#
+# libfabric.so.1 and libhwloc.so.15 are NOT bundled in the nixl wheel (policy
+# since 0.7.0 — AWS EFA version-skew avoidance). Must be on LD_LIBRARY_PATH.
+# Auditwheel-vendored libs (libucp, libnuma) live in nixl_cu12.libs/.
+ENV NIXL_PLUGIN_DIR=/opt/dynamo/venv/lib/python3.12/site-packages/.nixl_cu12.mesonpy.libs/plugins \
+    LD_LIBRARY_PATH="/opt/amazon/efa/lib:/opt/amazon/efa/lib64:/opt/dynamo/venv/lib/python3.12/site-packages/nixl_cu12.libs:/opt/dynamo/venv/lib/python3.12/site-packages/.nixl_cu12.mesonpy.libs:/opt/nvidia/nvda_nixl/lib64:/opt/nvidia/nvda_nixl/lib64/plugins:/usr/local/ucx/lib:/opt/amazon/aws-ofi-nccl/lib:/usr/local/nccl/lib:/opt/gdrcopy/lib:${LD_LIBRARY_PATH:-}" \
+    PATH="/opt/nccl-tests/bin:/usr/local/ucx/bin:/opt/amazon/efa/bin:${PATH}" \
     FI_PROVIDER=efa \
     FI_EFA_USE_DEVICE_RDMA=1 \
     FI_EFA_ENABLE_SHM=0 \
@@ -339,9 +356,13 @@ ENV LD_LIBRARY_PATH="/opt/nvidia/nvda_nixl/lib64:/opt/nvidia/nvda_nixl/lib64/plu
 # Filesystem validation (no Python execution — avoids GPU-less CodeBuild stalls)
 RUN echo "=== dynamo-combined-efa build validation ===" \
  && ls /opt/nvidia/nvda_nixl/lib64/plugins/libplugin_LIBFABRIC.so \
- && echo "  NIXL LIBFABRIC plugin: present" \
+ && echo "  NIXL (source) LIBFABRIC plugin: present" \
+ && ls /opt/dynamo/venv/lib/python3.12/site-packages/.nixl_cu12.mesonpy.libs/plugins/libplugin_LIBFABRIC.so \
+ && echo "  NIXL (pip wheel) LIBFABRIC plugin: present at NIXL_PLUGIN_DIR" \
  && ls /opt/amazon/efa/lib/libfabric.so* >/dev/null \
  && echo "  libfabric: present" \
+ && ls /opt/nccl-tests/bin/all_reduce_perf >/dev/null \
+ && echo "  nccl-tests: present" \
  && ls /opt/trtllm-venv/bin/trtllm-serve >/dev/null \
  && ls /opt/trtllm-venv/lib/python3.12/site-packages/tensorrt_llm >/dev/null \
  && echo "  TRT-LLM venv present at /opt/trtllm-venv" \

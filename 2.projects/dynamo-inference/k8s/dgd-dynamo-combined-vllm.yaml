@@ -112,6 +112,7 @@ spec:
                 --model meta-llama/Llama-3.1-8B-Instruct \
                 --served-model-name meta-llama/Llama-3.1-8B-Instruct \
                 --disaggregation-mode prefill \
+                --kv-transfer-config '{"kv_connector":"NixlConnector","kv_role":"kv_both"}' \
                 --max-model-len 4096 \
                 --gpu-memory-utilization 0.85
           resources:
@@ -163,9 +164,9 @@ spec:
         - { name: FI_EFA_ENABLE_SHM,          value: "0" }
         - { name: FI_EFA_ENABLE_SHM_TRANSFER, value: "0" }
         - { name: HF_HOME,                    value: "/shared/hf_cache" }
-        - name: NIXL_SIDE_CHANNEL_HOST
+        - name: VLLM_NIXL_SIDE_CHANNEL_HOST
           valueFrom: { fieldRef: { fieldPath: status.podIP } }
-        - { name: NIXL_SIDE_CHANNEL_PORT, value: "5700" }
+        - { name: VLLM_NIXL_SIDE_CHANNEL_PORT, value: "5700" }
 
 # ===========================================================================
 # DGD 3/3 — Decode worker (1 GPU, node 2, EFA-attached, anti-affinity)
@@ -201,6 +202,7 @@ spec:
                 --model meta-llama/Llama-3.1-8B-Instruct \
                 --served-model-name meta-llama/Llama-3.1-8B-Instruct \
                 --disaggregation-mode decode \
+                --kv-transfer-config '{"kv_connector":"NixlConnector","kv_role":"kv_both"}' \
                 --max-model-len 4096 \
                 --gpu-memory-utilization 0.85
           resources:
@@ -259,6 +261,6 @@ spec:
         - { name: FI_EFA_ENABLE_SHM,          value: "0" }
         - { name: FI_EFA_ENABLE_SHM_TRANSFER, value: "0" }
         - { name: HF_HOME,                    value: "/shared/hf_cache" }
-        - name: NIXL_SIDE_CHANNEL_HOST
+        - name: VLLM_NIXL_SIDE_CHANNEL_HOST
           valueFrom: { fieldRef: { fieldPath: status.podIP } }
-        - { name: NIXL_SIDE_CHANNEL_PORT, value: "5700" }
+        - { name: VLLM_NIXL_SIDE_CHANNEL_PORT, value: "5700" }
