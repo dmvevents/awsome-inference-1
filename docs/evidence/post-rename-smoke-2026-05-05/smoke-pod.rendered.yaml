@@ -1,11 +1,11 @@
 apiVersion: v1
 kind: Pod
 metadata:
-  name: SMOKE_POD_NAME
+  name: dynamo-smoke-d35812db45d6
   namespace: default
   labels:
     app: dynamo-smoke
-    sha: SMOKE_SHA
+    sha: d35812db45d6
   annotations:
     k8s.v1.cni.cncf.io/networks: efa1,efa2,efa3,efa4,efa5,efa6,efa7,efa8,efa9,efa10,efa11,efa12,efa13,efa14,efa15,efa16,efa17,efa18,efa19,efa20,efa21,efa22,efa23,efa24,efa25,efa26,efa27,efa28,efa29,efa30,efa31,efa32
 spec:
@@ -26,7 +26,7 @@ spec:
         medium: HugePages
   containers:
     - name: dynamo
-      image: SMOKE_IMAGE_URI
+      image: 058264135704.dkr.ecr.us-east-2.amazonaws.com/dynamo-efa:d35812db45d6
       imagePullPolicy: IfNotPresent
       securityContext:
         capabilities:
@@ -37,7 +37,7 @@ spec:
       args:
         - |
           set -eo pipefail
-          echo "[smoke] $(date -Is) boot with image=SMOKE_IMAGE_URI sha=SMOKE_SHA"
+          echo "[smoke] $(date -Is) boot with image=058264135704.dkr.ecr.us-east-2.amazonaws.com/dynamo-efa:d35812db45d6 sha=d35812db45d6"
           nvidia-smi -L
           fi_info -p efa | head -20 || echo "[smoke][WARN] fi_info failed"
           # Single-instance vLLM server on localhost:8000 (no DGD CRD).
@@ -49,7 +49,7 @@ spec:
           export NCCL_NVLS_ENABLE=0
           mkdir -p /tmp/smoke
           ( python3 -m vllm.entrypoints.openai.api_server \
-              --model SMOKE_MODEL \
+              --model facebook/opt-125m \
               --max-model-len 2048 \
               --gpu-memory-utilization 0.40 \
               --port 8000 \

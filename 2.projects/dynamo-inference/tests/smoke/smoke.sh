@@ -140,12 +140,20 @@ for arch in $EXPECTED; do grep -qx "$arch" "$OUT_DIR/nccl-arches.txt" || MISSING
 if [ -z "$MISSING" ]; then log "  T3: PASS"; else BLOCKING_FAILS+=("T3"); log "  T3: FAIL missing:${MISSING}"; fi
 
 # -----------------------------------------------------------------------------
-# T5 — Server boots (/v1/models)
+# T5 — Server boots (/v1/models) — poll up to 8 min (model load)
 # -----------------------------------------------------------------------------
-log "T5 vLLM /v1/models"
-kubectl exec -n "$K8S_NAMESPACE" "$POD_NAME" -- curl -sf http://127.0.0.1:8000/v1/models > "$OUT_DIR/v1-models.json" 2>&1 \
-    || { BLOCKING_FAILS+=("T5"); log "  T5: FAIL"; }
-[ -s "$OUT_DIR/v1-models.json" ] && log "  T5: PASS"
+log "T5 vLLM /v1/models (polling up to 8 min for model load)"
+T5_PASS=0
+for i in $(seq 1 48); do
+    if kubectl exec -n "$K8S_NAMESPACE" "$POD_NAME" -- \
+        curl -sf http://127.0.0.1:8000/v1/models > "$OUT_DIR/v1-models.json" 2>&1; then
+        T5_PASS=1
+        log "  T5: PASS (after $((i*10))s)"
+        break
+    fi
+    sleep 10
+done
+[ "$T5_PASS" = "1" ] || { BLOCKING_FAILS+=("T5"); log "  T5: FAIL (8 min timeout)"; kubectl logs "$POD_NAME" -n "$K8S_NAMESPACE" | tail -40 >> "$OUT_DIR/v1-models.json"; }
 
 # -----------------------------------------------------------------------------
 # T6 — Chat completion
