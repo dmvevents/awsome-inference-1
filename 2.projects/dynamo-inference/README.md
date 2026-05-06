@@ -518,6 +518,18 @@ completion JSON, and `summary.md`).
 
 ---
 
+
+---
+
+## Reproducibility
+
+External readers, upstream maintainers, and customer reviewers: see
+[REPRODUCIBILITY.md](REPRODUCIBILITY.md) for how to build the same
+images the committed `docs/evidence/` logs were produced on. You do
+not need access to our private ECR or internal cluster — the
+Dockerfiles pull only public NGC images, and the git commit SHAs
+map 1:1 to image tags.
+
 ## Troubleshooting
 
 ### Common Issues
