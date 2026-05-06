@@ -116,6 +116,19 @@ spec:
                 --kv-transfer-config '{"kv_connector":"NixlConnector","kv_role":"kv_both"}' \
                 --max-model-len 4096 \
                 --gpu-memory-utilization 0.85
+          # Readiness probe on DYN_SYSTEM_PORT — required for Frontend discovery.
+          # The Dynamo runtime's KubeDiscoveryClient (daemon.rs:246 in 1.1.0)
+          # filters EndpointSlices by endpoint.conditions.ready==true. Without
+          # a probe, k8s keeps Pod Ready=False during model load, which blocks
+          # Service endpoint readiness, which hides the worker from Frontend.
+          # Root-cause evidence: docs/evidence/multinode-2026-05-06-rev5/
+          readinessProbe:
+            tcpSocket:
+              port: 9191
+            initialDelaySeconds: 180
+            periodSeconds: 10
+            timeoutSeconds: 3
+            failureThreshold: 30
           resources:
             limits:
               cpu: "16"
@@ -204,6 +217,16 @@ spec:
                 --kv-transfer-config '{"kv_connector":"NixlConnector","kv_role":"kv_both"}' \
                 --max-model-len 4096 \
                 --gpu-memory-utilization 0.85
+          # Readiness probe — see PrefillWorker above for full rationale.
+          # Without this, EndpointSlice stays ready=False during model load
+          # and Frontend's KubeDiscoveryClient returns 0 instances.
+          readinessProbe:
+            tcpSocket:
+              port: 9191
+            initialDelaySeconds: 180
+            periodSeconds: 10
+            timeoutSeconds: 3
+            failureThreshold: 30
           resources:
             limits:
               cpu: "16"
