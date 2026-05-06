@@ -23,8 +23,8 @@
 #
 # Build args:
 #   NETWORKING_BASE  — networking-base image (default: public ECR)
-#   TRTLLM_IMAGE     — TRT-LLM runtime source (default: NGC 1.0.1)
-#   VLLM_IMAGE       — vLLM runtime source (default: NGC 1.0.1)
+#   TRTLLM_IMAGE     — TRT-LLM runtime source (default: NGC 1.1.0)
+#   VLLM_IMAGE       — vLLM runtime source (default: NGC 1.1.0)
 #   GENERATE_SBOM    — "0" to skip SBOM (default: "1")
 #   CVE_SCAN         — "0" to skip CVE scan (default: "1")
 #
@@ -36,8 +36,8 @@
 #
 # =============================================================================
 
-ARG TRTLLM_IMAGE=nvcr.io/nvidia/ai-dynamo/tensorrtllm-runtime:1.0.1
-ARG VLLM_IMAGE=nvcr.io/nvidia/ai-dynamo/vllm-runtime:1.0.1
+ARG TRTLLM_IMAGE=nvcr.io/nvidia/ai-dynamo/tensorrtllm-runtime:1.1.0
+ARG VLLM_IMAGE=nvcr.io/nvidia/ai-dynamo/vllm-runtime:1.1.0
 
 # Public-only FROM chain (distribution-review requirement):
 #   nvcr.io/nvidia/cuda-dl-base                      — NVIDIA NGC, public
@@ -336,7 +336,7 @@ COPY entrypoint.sh /usr/local/bin/dynamo-combined-entrypoint
 RUN chmod +x /usr/local/bin/dynamo-combined-entrypoint
 
 # NIXL plugin discovery — override the source-built path from networking-builder
-# stage. At runtime, Dynamo's vLLM workers use the pip-installed nixl-cu12 1.0.1
+# stage. At runtime, Dynamo's vLLM workers use the pip-installed nixl-cu12
 # wheel, whose plugins live INSIDE the /opt/dynamo/venv site-packages. The NIXL
 # loader reads NIXL_PLUGIN_DIR (singular) from nixl_plugin_manager.cpp:278. The
 # canonical wheel plugin path is .nixl_cu12.mesonpy.libs/plugins/ because the
@@ -432,8 +432,8 @@ COPY --from=security-scan /opt/security /opt/security
 
 LABEL maintainer="nemo-rl" \
       description="Dynamo Combined EFA — TRT-LLM + vLLM with SBOM and CVE scan" \
-      dynamo.trtllm.version="1.0.1" \
-      dynamo.vllm.version="1.0.1" \
+      dynamo.trtllm.version="1.1.0" \
+      dynamo.vllm.version="1.1.0" \
       efa.version="1.48.0" \
       networking.base="v5" \
       security.sbom="spdx+cyclonedx at /opt/security/" \
