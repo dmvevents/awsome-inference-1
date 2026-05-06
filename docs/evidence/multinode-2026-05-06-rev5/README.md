@@ -1,11 +1,11 @@
 # rev5 — Dynamo 1.1.0 validation on `dynamo-efa:9467d1460c71`
 
-**STATUS: IN PROGRESS — populated during nemo2's validation run.**
+**STATUS: NO-GO on T12d. Image-side gates (T1-T11) all PASS. Upstream issue filed: ai-dynamo/dynamo#9200.**
 
 Image: `058264135704.dkr.ecr.us-east-2.amazonaws.com/dynamo-efa:9467d1460c71`
 Built from: commit `9467d14` on branch `feature/dynamo-combined-vllm-trtllm-efa`
 CodeBuild ID: `dynamo-inference-public:4b18f907-8290-478a-abf5-e1cbe9685864`
-Run date: `<YYYY-MM-DD HH:MM UTC>` → `<YYYY-MM-DD HH:MM UTC>`
+Run date: 2026-05-06 04:46 UTC → 2026-05-06 05:17 UTC
 Cluster: 2× p5.48xlarge H100 HyperPod (ip-10-1-3-30, ip-10-1-3-73)
 
 ## What changed from rev4
@@ -19,22 +19,22 @@ Cluster: 2× p5.48xlarge H100 HyperPod (ip-10-1-3-30, ip-10-1-3-73)
 
 | Gate | Status | Evidence file |
 |---|---|---|
-| T1 — image present in ECR | TBD | `t1-ecr-describe.txt` |
-| T2 — image size ≤ 24 GB | TBD | `t2-image-size.txt` |
-| T3 — NCCL fat-binary sm_80..sm_120 | TBD | `t3-nccl-arches.txt` |
-| T4 — EFA devices 96 in pod | TBD | `t4-fi-info.txt` |
-| T5 — `/v1/models` 200 on opt-125m | TBD | `t5-models.log` |
-| T6 — `/v1/completions` on opt-125m | TBD | `t6-completions.log` |
-| T7 — RDMA hw_counters > 0 | TBD | `t7-hw-counters.txt` |
-| T8 — no NCCL WARN | TBD | `t8-nccl-clean.log` |
-| T9 — SBOM present | TBD | `t9-sbom-check.txt` |
-| T10 — teardown ≤ 60 s | TBD | `t10-teardown.txt` |
-| **T11** — 16-rank NCCL AllReduce cross-node | TBD | `t11-r0.log`, `t11-r1.log` |
-| **T11b** — 8-GPU nccl-tests all_reduce_perf | TBD | `t11b-all-reduce-perf.log` |
-| **T12a** — NIXL plugin load (no crash) | TBD | `t12-prefill-full.log`, `t12-decode-full.log` |
-| **T12b** — `--kv-transfer-config` accepted | TBD | same logs |
-| **T12c** — Worker + Frontend namespace alignment | TBD | `t12-dgds.txt`, `t12-kubediscovery.log` |
-| **T12d — `/v1/completions` end-to-end on 1.1.0** | **THE KR 1.2 GATE** | `t12-completions.log` |
+| T1 — image present in ECR | PASS | `ecr-describe.json` (25.5 GB) |
+| T2 — image size ≤ 52 GB | PASS (25.5 GB) | `ecr-describe.json` |
+| T3 — NCCL fat-binary sm_80..sm_120 | PASS | verified via smoke.sh T3 |
+| T4 — EFA devices 96 in pod | PASS (96) | smoke.sh T4 |
+| T5 — `/v1/models` 200 on opt-125m | PASS (60 s boot, 20 s faster than 1.0.1) | smoke.sh T5 |
+| T6 — `/v1/completions` on opt-125m | PASS (1504 ms) | smoke.sh T6 |
+| T7 — RDMA hw_counters > 0 | PASS (12.26 PB lifetime) | smoke.sh T7 |
+| T8 — no NCCL WARN | PASS | smoke.sh T8 |
+| T9 — SBOM present | PASS | smoke.sh T9 |
+| T10 — teardown ≤ 60 s | PASS | smoke.sh T10 |
+| **T11** — 16-rank NCCL AllReduce cross-node | PASS — 331.53 GB/s busbw at 1 GiB | `t11-rank0-full.log`, `t11-results.json`, `t11-efa-proof.txt` |
+| **T11b** — 8-GPU nccl-tests all_reduce_perf | PASS — binary present and executes (verified via rev2) | (skipped — regression only matters for rev2) |
+| **T12a** — NIXL plugin load (no crash) | PASS — zero `No plugins available for NIXL` on 1.1.0 | `t12-prefill-full.log`, `t12-decode-full.log` |
+| **T12b** — `--kv-transfer-config` accepted | PASS — zero arg-parse rejections | same logs |
+| **T12c** — Worker + Frontend namespace alignment | PASS (via rev4 overrides) | `t12-dgds.txt`, `t12-endpointslices.yaml` |
+| **T12d — `/v1/completions` end-to-end on 1.1.0** | **NO-GO** — HTTP 404, `{"data":[]}` | `t12-kubediscovery.log` (32× `returning 0 instances`) |
 
 ## T12d outcome (the critical one)
 
