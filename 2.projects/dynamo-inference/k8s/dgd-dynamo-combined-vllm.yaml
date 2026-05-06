@@ -55,11 +55,12 @@ spec:
     # Frontend — HTTP ingress, no GPU
     # -----------------------------------------------------------------------
     Frontend:
+      envFromSecret: hf-token
       componentType: frontend
       replicas: 1
       extraPodSpec:
         mainContainer:
-          image: 159553542841.dkr.ecr.us-west-2.amazonaws.com/dynamo-combined-efa:latest
+          image: 058264135704.dkr.ecr.us-east-2.amazonaws.com/dynamo-efa:9467d1460c71
           imagePullPolicy: IfNotPresent
           command: ["/bin/bash", "-c"]
           args:
@@ -80,7 +81,7 @@ spec:
     # PrefillWorker — 1 GPU, EFA-attached
     # -----------------------------------------------------------------------
     PrefillWorker:
-      envFromSecret: hf-token-secret
+      envFromSecret: hf-token
       componentType: worker
       subComponentType: prefill
       replicas: 1
@@ -95,11 +96,11 @@ spec:
           - name: hugepages
             emptyDir: { medium: HugePages }
           - name: shared
-            persistentVolumeClaim: { claimName: fsx-pvc }
+            persistentVolumeClaim: { claimName: dynamo-shared-storage }
           - name: shm
             emptyDir: { medium: Memory, sizeLimit: 64Gi }
         mainContainer:
-          image: 159553542841.dkr.ecr.us-west-2.amazonaws.com/dynamo-combined-efa:latest
+          image: 058264135704.dkr.ecr.us-east-2.amazonaws.com/dynamo-efa:9467d1460c71
           imagePullPolicy: IfNotPresent
           securityContext: { privileged: true }
           command: ["/bin/bash", "-c"]
@@ -123,12 +124,13 @@ spec:
           # Service endpoint readiness, which hides the worker from Frontend.
           # Root-cause evidence: docs/evidence/multinode-2026-05-06-rev5/
           readinessProbe:
-            tcpSocket:
-              port: 9191
-            initialDelaySeconds: 180
+            httpGet:
+              path: /health
+              port: 9090
+            initialDelaySeconds: 120
             periodSeconds: 10
-            timeoutSeconds: 3
-            failureThreshold: 30
+            timeoutSeconds: 5
+            failureThreshold: 60
           resources:
             limits:
               cpu: "16"
@@ -151,7 +153,6 @@ spec:
         - { name: DYNAMO_BACKEND,             value: "vllm" }
         - { name: ETCD_ENDPOINTS,             value: "http://dynamo-platform-etcd.default.svc.cluster.local:2379" }
         - { name: NATS_SERVER,                value: "nats://dynamo-platform-nats.default.svc.cluster.local:4222" }
-        - { name: DYN_SYSTEM_PORT,            value: "9191" }
         - { name: DYN_SYSTEM_ENABLED,         value: "true" }
         # NIXL KV-cache transport over EFA
         - { name: NIXL_BACKEND,               value: "LIBFABRIC" }
@@ -172,7 +173,7 @@ spec:
     # DecodeWorker — 1 GPU, EFA-attached, anti-affinity to prefill
     # -----------------------------------------------------------------------
     DecodeWorker:
-      envFromSecret: hf-token-secret
+      envFromSecret: hf-token
       componentType: worker
       subComponentType: decode
       replicas: 1
@@ -196,11 +197,11 @@ spec:
           - name: hugepages
             emptyDir: { medium: HugePages }
           - name: shared
-            persistentVolumeClaim: { claimName: fsx-pvc }
+            persistentVolumeClaim: { claimName: dynamo-shared-storage }
           - name: shm
             emptyDir: { medium: Memory, sizeLimit: 64Gi }
         mainContainer:
-          image: 159553542841.dkr.ecr.us-west-2.amazonaws.com/dynamo-combined-efa:latest
+          image: 058264135704.dkr.ecr.us-east-2.amazonaws.com/dynamo-efa:9467d1460c71
           imagePullPolicy: IfNotPresent
           securityContext: { privileged: true }
           command: ["/bin/bash", "-c"]
@@ -221,12 +222,13 @@ spec:
           # Without this, EndpointSlice stays ready=False during model load
           # and Frontend's KubeDiscoveryClient returns 0 instances.
           readinessProbe:
-            tcpSocket:
-              port: 9191
-            initialDelaySeconds: 180
+            httpGet:
+              path: /health
+              port: 9090
+            initialDelaySeconds: 120
             periodSeconds: 10
-            timeoutSeconds: 3
-            failureThreshold: 30
+            timeoutSeconds: 5
+            failureThreshold: 60
           resources:
             limits:
               cpu: "16"
@@ -249,7 +251,6 @@ spec:
         - { name: DYNAMO_BACKEND,             value: "vllm" }
         - { name: ETCD_ENDPOINTS,             value: "http://dynamo-platform-etcd.default.svc.cluster.local:2379" }
         - { name: NATS_SERVER,                value: "nats://dynamo-platform-nats.default.svc.cluster.local:4222" }
-        - { name: DYN_SYSTEM_PORT,            value: "9191" }
         - { name: DYN_SYSTEM_ENABLED,         value: "true" }
         - { name: NIXL_BACKEND,               value: "LIBFABRIC" }
         - { name: NIXL_SKIP_TOPOLOGY_CHECK,   value: "1" }
