@@ -8,8 +8,16 @@
 #   - --image-name NAME overrides the built image name (efa or combined only).
 #   - --base-image URI lets the combined build consume a pre-built efa base
 #     from ECR instead of rebuilding — shaves ~25 min off CodeBuild runs.
-#   - -a/--arch is now a no-op WARN; images ship fat binaries for the full
-#     datacenter lineup (A100 → B300 + L40S).
+#   - Default is a fat image covering A100 → B300 + L40S (sm_80 sm_86 sm_89
+#     sm_90 sm_100 sm_120).
+#
+# Per Alex Iankoulski's 2026-05-07 feedback (#72):
+#   - Restore -a/--arch so operators can produce a targeted single-arch or
+#     arch-subset image while keeping the fat default for ./build.sh (no flag).
+#     Accepts a quoted space-separated sm list, e.g.:
+#       ./build.sh -a "sm_90"              # H100 only
+#       ./build.sh -a "sm_90 sm_100"       # H100 + H200/B200
+#     The env var CUDA_ARCH_LIST="sm_90" ./build.sh is an equivalent fallback.
 #
 
 set -e
@@ -20,7 +28,11 @@ TAG="latest"
 BUILD_TARGET="all"
 PUSH=false
 NO_CACHE=false
-CUDA_ARCH=""  # DEPRECATED — ignored, kept for back-compat
+# CUDA_ARCH_LIST: space-separated sm_* tokens (e.g. "sm_90" or "sm_90 sm_100").
+# Empty means "use the Dockerfile fat default" — do NOT hardcode the fat list
+# here; the Dockerfiles are the single source of truth for the default so this
+# script stays passive when no flag or env var is set.
+CUDA_ARCH_LIST="${CUDA_ARCH_LIST:-}"
 GENERATE_SBOM=1
 CVE_SCAN=1
 SBOM_OUT_DIR="$(pwd)/out/sbom"
@@ -38,8 +50,9 @@ print_usage() {
     echo "Usage: $0 [OPTIONS]"
     echo ""
     echo "Build EFA-enabled Docker images for Dynamo inference on AWS."
-    echo "Images ship a single fat binary covering sm80 (A100) through sm120 (B300)"
-    echo "plus sm86 (A10) and sm89 (L40S/L4). No per-GPU suffixes."
+    echo "Default is a fat binary covering sm_80 (A100), sm_86 (A10), sm_89"
+    echo "(L40S/L4), sm_90 (H100), sm_100 (H200/B200), and sm_120 (B300)."
+    echo "No per-GPU suffixes."
     echo ""
     echo "Options:"
     echo "  -r, --registry REGISTRY   Container registry (e.g., 123.dkr.ecr.us-east-2.amazonaws.com)"
@@ -50,7 +63,9 @@ print_usage() {
     echo "                            -b combined / -b trtllm / -b vllm. When provided, the combined"
     echo "                            build skips the local efa dep check and passes --build-arg"
     echo "                            BASE_IMAGE=<URI> to the downstream Dockerfile."
-    echo "  -a, --arch ARCH           DEPRECATED no-op. Images are fat-binary across sm80..sm120."
+    echo "  -a, --arch \"<sm list>\"    Build a targeted image for the given space-separated sm tokens."
+    echo "                            Omit for the fat default. Equivalent to CUDA_ARCH_LIST env var."
+    echo "                            Examples: \"sm_90\"  |  \"sm_90 sm_100\"  |  \"sm_80 sm_90\""
     echo "  -p, --push                Push images to registry after build"
     echo "  -n, --no-cache            Build without Docker cache"
     echo "      --no-sbom             Disable SBOM generation (default: enabled)"
@@ -60,11 +75,14 @@ print_usage() {
     echo "  -h, --help                Show this help message"
     echo ""
     echo "Examples:"
-    echo "  $0 -b efa -t v1.0.0                                   # build efa:v1.0.0"
+    echo "  $0 -b efa -t v1.0.0                                   # fat efa:v1.0.0"
     echo "  $0 -b combined -t v1.0.0 \\"
     echo "     --base-image 123.dkr.ecr.us-east-2.amazonaws.com/efa:v1.0.0"
-    echo "                                                         # build dynamo-efa:v1.0.0 from ECR base"
-    echo "  $0 -b efa -i my-efa-dev -t local                      # build my-efa-dev:local"
+    echo "                                                         # fat dynamo-efa:v1.0.0 from ECR base"
+    echo "  $0 -b efa -i my-efa-dev -t local                      # fat my-efa-dev:local"
+    echo "  $0 -b combined -a \"sm_90\"                             # H100-only image"
+    echo "  $0 -b combined -a \"sm_90 sm_100\"                      # H100 + H200/B200 image"
+    echo "  CUDA_ARCH_LIST=\"sm_90\" $0 -b combined                 # same as -a \"sm_90\""
 }
 
 log_info() {
@@ -103,7 +121,7 @@ while [[ $# -gt 0 ]]; do
             shift 2
             ;;
         -a|--arch)
-            CUDA_ARCH="$2"
+            CUDA_ARCH_LIST="$2"
             shift 2
             ;;
         -p|--push)
@@ -135,11 +153,28 @@ while [[ $# -gt 0 ]]; do
     esac
 done
 
-# Deprecated -a/--arch → WARN no-op
-if [ -n "$CUDA_ARCH" ]; then
-    log_warn "-a/--arch ${CUDA_ARCH} is a no-op. NCCL is compiled with NVCC_GENCODE covering"
-    log_warn "  sm80/sm86/sm89/sm90/sm100/sm120 (A100 → B300 + L40S). Ignoring."
-    CUDA_ARCH=""
+# Translate -a/--arch (or CUDA_ARCH_LIST env var) into NVCC_GENCODE build args.
+# When empty we pass nothing and the Dockerfile's ARG NVCC_GENCODE default
+# (fat list) is used. Each token must look like sm_NN; we reject anything else
+# so typos don't silently yield a no-op fat build.
+# NVCC_GENCODE_ARGS is an array so the value — which contains spaces — is
+# passed to `docker build` as exactly one --build-arg pair.
+NVCC_GENCODE_ARGS=()
+if [ -n "$CUDA_ARCH_LIST" ]; then
+    _gen=""
+    for tok in $CUDA_ARCH_LIST; do
+        if [[ ! "$tok" =~ ^sm_[0-9]+$ ]]; then
+            log_error "Invalid arch token '${tok}' in -a/CUDA_ARCH_LIST. Expected sm_NN (e.g. sm_90)."
+            exit 1
+        fi
+        cc="${tok#sm_}"
+        _gen="${_gen:+${_gen} }-gencode=arch=compute_${cc},code=${tok}"
+    done
+    NVCC_GENCODE_ARGS=(--build-arg "NVCC_GENCODE=${_gen}")
+    log_info "Targeted build: CUDA_ARCH_LIST='${CUDA_ARCH_LIST}'"
+    log_info "  NVCC_GENCODE=${_gen}"
+else
+    log_info "Fat default build: NVCC_GENCODE from Dockerfile (sm_80..sm_120)."
 fi
 
 # Set cache option
@@ -210,7 +245,7 @@ build_efa() {
     local IMAGE_NAME="${EFA_IMAGE}"
     log_info "Building base EFA image: ${IMAGE_NAME}:${TAG}"
 
-    docker build ${CACHE_OPT} ${SBOM_ARGS} ${SBOM_TARGET_ARG} \
+    docker build ${CACHE_OPT} ${SBOM_ARGS} ${SBOM_TARGET_ARG} "${NVCC_GENCODE_ARGS[@]}" \
         -f Dockerfile.efa \
         -t ${IMAGE_NAME}:${TAG} \
         .
@@ -295,7 +330,7 @@ build_combined() {
     BASE_REF="$(_resolve_base_image)"
     log_info "Building combined (vLLM + TRT-LLM) image: ${IMAGE_NAME}:${TAG} (base=${BASE_REF})"
 
-    docker build ${CACHE_OPT} ${SBOM_ARGS} ${SBOM_TARGET_ARG} \
+    docker build ${CACHE_OPT} ${SBOM_ARGS} ${SBOM_TARGET_ARG} "${NVCC_GENCODE_ARGS[@]}" \
         -f Dockerfile.dynamo-combined-efa \
         --build-arg BASE_IMAGE=${BASE_REF} \
         -t ${IMAGE_NAME}:${TAG} \

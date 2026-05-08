@@ -53,6 +53,11 @@ ARG UCX_REF=v1.20.0
 ARG NIXL_REF=v1.0.1
 ARG NCCL_VERSION=v2.30.3-1
 
+# Fat default spans A100 (sm_80), A10 (sm_86), L40S/L4 (sm_89), H100 (sm_90),
+# H200/B200 (sm_100), and B300 (sm_120). Override via `./build.sh -a "<sm list>"`
+# or `CUDA_ARCH_LIST=...` to produce a targeted single/multi-arch image.
+ARG NVCC_GENCODE="-gencode=arch=compute_80,code=sm_80 -gencode=arch=compute_86,code=sm_86 -gencode=arch=compute_89,code=sm_89 -gencode=arch=compute_90,code=sm_90 -gencode=arch=compute_100,code=sm_100 -gencode=arch=compute_120,code=sm_120"
+
 # Scanner binaries (off-tree; do not ship in final)
 FROM aquasec/trivy:latest AS trivy-bin
 FROM anchore/syft:latest  AS syft-bin
@@ -137,6 +142,7 @@ FROM efa-rdma-stage AS networking-builder
 ARG UCX_REF
 ARG NIXL_REF
 ARG NCCL_VERSION
+ARG NVCC_GENCODE
 
 USER root
 WORKDIR /workspace
@@ -196,7 +202,7 @@ RUN git clone --depth 1 --branch ${NIXL_REF} https://github.com/ai-dynamo/nixl.g
 RUN git clone --branch ${NCCL_VERSION} --depth 1 https://github.com/NVIDIA/nccl.git && \
     cd nccl && \
     make -j$(nproc) src.build \
-        NVCC_GENCODE="-gencode=arch=compute_80,code=sm_80 -gencode=arch=compute_86,code=sm_86 -gencode=arch=compute_89,code=sm_89 -gencode=arch=compute_90,code=sm_90 -gencode=arch=compute_100,code=sm_100 -gencode=arch=compute_120,code=sm_120" \
+        NVCC_GENCODE="${NVCC_GENCODE}" \
         CUDA_HOME=${CUDA_HOME} \
         BUILDDIR=/workspace/nccl-build && \
     make install PREFIX=/usr/local/nccl BUILDDIR=/workspace/nccl-build && \
