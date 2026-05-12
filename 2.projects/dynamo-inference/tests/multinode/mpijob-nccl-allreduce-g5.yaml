@@ -63,7 +63,7 @@ spec:
                     -x NCCL_NET_PLUGIN=ofi \
                     -x NCCL_NVLS_ENABLE=0 \
                     /opt/nccl-tests/bin/all_reduce_perf \
-                      -b 8 -e 1G -f 2 -g 1 -c 1 -n 20
+                      -b 8 -e 8G -f 2 -g 1 -c 1 -n 50
     Worker:
       replicas: 2
       template:
