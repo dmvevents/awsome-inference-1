@@ -374,6 +374,47 @@ TEST_SCRIPT
 RUN chmod +x /opt/tests/run-efa-tests.sh
 RUN /opt/tests/run-efa-tests.sh
 
+# ==========================================================
+# SSH setup for NCCL / MPI multi-node communication
+# - Installs openssh-server
+# - Enables passwordless SSH for root between containers
+# - Starts sshd on container startup via a small entrypoint
+# Fixes: NCCL workshop error "/usr/sbin/sshd: No such file or directory"
+# ==========================================================
+
+RUN apt-get update && \
+    DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
+        openssh-server openssh-client && \
+    rm -rf /var/lib/apt/lists/*
+
+# Server-side SSH configuration and keys
+RUN mkdir -p /run/sshd /root/.ssh && \
+    # Regenerate host keys
+    rm -f /etc/ssh/ssh_host_* && \
+    ssh-keygen -A && \
+    \
+    # Use host RSA key as root's client key (symmetric across containers)
+    cp /etc/ssh/ssh_host_rsa_key     /root/.ssh/id_rsa && \
+    cp /etc/ssh/ssh_host_rsa_key.pub /root/.ssh/id_rsa.pub && \
+    cat /etc/ssh/ssh_host_rsa_key.pub | cut -d' ' -f1,2 > /root/.ssh/authorized_keys && \
+    chmod 700 /root/.ssh && \
+    chmod 600 /root/.ssh/id_rsa /root/.ssh/authorized_keys && \
+    \
+    # sshd config: allow root with pubkey, disable passwords
+    sed -i 's/^#\?PermitRootLogin.*/PermitRootLogin yes/' /etc/ssh/sshd_config && \
+    sed -i 's/^#\?PasswordAuthentication.*/PasswordAuthentication no/' /etc/ssh/sshd_config && \
+    sed -i 's/^#\?PubkeyAuthentication.*/PubkeyAuthentication yes/' /etc/ssh/sshd_config && \
+    sed -i 's/^#\?StrictModes.*/StrictModes no/' /etc/ssh/sshd_config
+
+# Client-side SSH configuration (no host key prompts)
+RUN printf "Host *\n  StrictHostKeyChecking no\n  UserKnownHostsFile /dev/null\n  LogLevel ERROR\n" \
+      > /root/.ssh/config && \
+    chmod 600 /root/.ssh/config
+
+# Entry point wrapper: start sshd, then run the requested command
+RUN printf '#!/bin/bash\nset -e\n/usr/sbin/sshd\nexec "$@"\n' > /usr/local/bin/with-sshd && \
+    chmod +x /usr/local/bin/with-sshd
+
 # =============================================================================
 # Stage 5: security-scan — SBOM + CVE generation (discarded after COPY)
 # =============================================================================
@@ -433,3 +474,7 @@ LABEL maintainer="nemo-rl" \
       base.image="nvcr.io/nvidia/cuda-dl-base:25.06-cuda12.9-devel-ubuntu24.04" \
       security.sbom="spdx+cyclonedx at /opt/security/" \
       security.cve-scan="trivy at /opt/security/"
+
+# Start sshd on container startup so NCCL / MPI orted can hop between pods.
+ENTRYPOINT ["/usr/local/bin/with-sshd"]
+CMD ["/bin/bash"]
