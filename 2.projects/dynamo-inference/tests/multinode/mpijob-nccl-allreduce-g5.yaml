@@ -51,7 +51,7 @@ spec:
                     -np 2 -N 1 \
                     --hostfile /etc/mpi/hostfile \
                     --bind-to none \
-                    --mca plm_rsh_args "-o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null" \
+                    --mca plm_rsh_args "-p 2022 -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null" \
                     --mca pml ^cm,ucx \
                     --mca btl tcp,self \
                     --mca btl_tcp_if_exclude lo,docker0,veth \
@@ -73,6 +73,8 @@ spec:
         spec:
           restartPolicy: OnFailure
           hostIPC: true
+          hostNetwork: true
+          dnsPolicy: ClusterFirstWithHostNet
           nodeSelector:
             node.kubernetes.io/instance-type: "ml.g5.8xlarge"
           tolerations:
@@ -80,13 +82,34 @@ spec:
           volumes:
             - name: dshm
               emptyDir: { medium: Memory, sizeLimit: 16Gi }
+            - name: ib
+              hostPath: { path: /dev/infiniband }
+            - name: ibsys
+              hostPath: { path: /sys/class/infiniband }
           containers:
             - name: worker
               image: public.ecr.aws/hpc-cloud/efa:gpu
               imagePullPolicy: IfNotPresent
+              env:
+                # The image bakes FI_EFA_USE_DEVICE_RDMA=1 into Docker ENV.
+                # g5.8xlarge EFA has no rdma-read capability — the flag
+                # causes aws-ofi-nccl to silently fall back (no wire traffic,
+                # counters stay 0). Unset explicitly for g5.
+                - name: FI_EFA_USE_DEVICE_RDMA
+                  value: "0"
+                - name: FI_EFA_ENABLE_SHM_TRANSFER
+                  value: "0"
+              # hostNetwork=true means port 22 is already taken by the host's sshd.
+              # Bypass the image's with-sshd entrypoint; start sshd on port 2022 instead.
+              command: ["/bin/bash", "-lc"]
+              args:
+                - |
+                  mkdir -p /run/sshd
+                  /usr/sbin/sshd -D -p 2022 -o PermitRootLogin=yes -o PasswordAuthentication=no -o StrictModes=no
               securityContext:
+                privileged: true
                 capabilities:
-                  add: [IPC_LOCK, SYS_PTRACE]
+                  add: [IPC_LOCK, SYS_PTRACE, NET_ADMIN]
               resources:
                 limits:
                   nvidia.com/gpu: "1"
@@ -101,3 +124,8 @@ spec:
               volumeMounts:
                 - mountPath: /dev/shm
                   name: dshm
+                - mountPath: /dev/infiniband
+                  name: ib
+                - mountPath: /sys/class/infiniband
+                  name: ibsys
+                  readOnly: true
