@@ -209,6 +209,34 @@ RUN git clone --branch ${NCCL_VERSION} --depth 1 https://github.com/NVIDIA/nccl.
     echo "/usr/local/nccl/lib" > /etc/ld.so.conf.d/nccl.conf && \
     ldconfig && cd /workspace && rm -rf nccl nccl-build
 
+# --- aws-ofi-nccl v1.19.1 (upstream source build) ---
+# The EFA installer's --build-ngc path drops a plugin, but we rebuild from
+# upstream against *our* NCCL v2.30.3 + Libfabric 2.4 to avoid ABI drift and
+# to guarantee the plugin version. 1.14 is known to silently no-op on g5.8xl
+# EFA (SENDRECV-only) — 1.19.1 is the confirmed-good release as of 2026-05.
+RUN set -eux; \
+    apt-get update && apt-get install -y --no-install-recommends \
+        autoconf automake libtool hwloc libhwloc-dev && \
+    rm -rf /var/lib/apt/lists/*; \
+    git clone --branch v1.19.1 --depth 1 https://github.com/aws/aws-ofi-nccl.git /tmp/aws-ofi-nccl && \
+    cd /tmp/aws-ofi-nccl && \
+    ./autogen.sh && \
+    ./configure \
+        --prefix=/opt/amazon/aws-ofi-nccl \
+        --with-libfabric=/opt/amazon/efa \
+        --with-cuda=${CUDA_HOME} \
+        --with-nccl=/usr/local/nccl \
+        --enable-platform-aws && \
+    make -j$(nproc) && \
+    make install && \
+    cd /workspace && rm -rf /tmp/aws-ofi-nccl && \
+    # Make sure NCCL finds our freshly-built libnccl-net-ofi.so
+    echo "/opt/amazon/aws-ofi-nccl/lib" > /etc/ld.so.conf.d/aws-ofi-nccl.conf && \
+    ldconfig && \
+    # Sanity check — expose version in the final image
+    nm -D /opt/amazon/aws-ofi-nccl/lib/libnccl-net-ofi.so 2>/dev/null | grep -q ncclNet || \
+        { echo "ERROR: aws-ofi-nccl libnccl-net-ofi.so missing ncclNet symbols"; exit 1; }
+
 # --- nccl-tests v2.18.2 ---
 RUN git clone --branch v2.18.2 --depth 1 https://github.com/NVIDIA/nccl-tests.git && \
     cd nccl-tests && \
