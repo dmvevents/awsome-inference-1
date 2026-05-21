@@ -173,20 +173,43 @@ RUN git clone --depth 1 --branch ${NIXL_REF} https://github.com/ai-dynamo/nixl.g
     cd build && ninja && ninja install && \
     cd /workspace && rm -rf nixl
 
+# etcd-cpp-apiv3 — required for nixlbench's ETCD coordination runtime.
+# nixlbench's meson.build does `dependency('etcd-cpp-api', required : false)`;
+# without this dep, meson disables ETCD runtime at compile time and the binary
+# fails at flag-parse with "Invalid runtime: ETCD" even with default flags.
+# Round 4 evidence: docs/evidence/rev8-pr72-e2e-2026-05-21/round4-nixlbench-multinode/VERDICT.md
+RUN set -eux; \
+    apt-get update && apt-get install -y --no-install-recommends \
+        libcpprest-dev libprotobuf-dev libgrpc-dev libgrpc++-dev protobuf-compiler-grpc && \
+    rm -rf /var/lib/apt/lists/*; \
+    git clone --depth 1 --branch v0.15.4 https://github.com/etcd-cpp-apiv3/etcd-cpp-apiv3.git && \
+    cd etcd-cpp-apiv3 && mkdir build && cd build && \
+    cmake -DCMAKE_BUILD_TYPE=Release -DCMAKE_INSTALL_PREFIX=/usr/local .. && \
+    make -j$(nproc) && make install && ldconfig && \
+    pkg-config --exists etcd-cpp-api && pkg-config --modversion etcd-cpp-api && \
+    cd /workspace && rm -rf etcd-cpp-apiv3
+
 # nixlbench (C++ NIXL benchmark) — paired with NIXL above. Apt deps
 # libhwloc-dev libgflags-dev libtomlplusplus-dev mirror base/networking-base/Dockerfile.
-# Without this stage, /opt/nixlbench/ is missing and the COPY --from=networking
-# downstream fails the build (rev8 build #14 hit this exact gap).
+# etcd-cpp-api is built from source above so the ETCD runtime is enabled.
+# Without /opt/nixlbench, the COPY --from=networking downstream fails the build
+# (rev8 build #14 hit this exact gap). Without etcd-cpp-api, the binary can't
+# coordinate cross-node and fails with "Invalid runtime: ETCD" (rev8 round 4).
 RUN set -eux; \
     apt-get update && apt-get install -y --no-install-recommends \
         libhwloc-dev libgflags-dev libtomlplusplus-dev && \
     rm -rf /var/lib/apt/lists/*; \
     git clone --depth 1 --branch ${NIXL_REF} https://github.com/ai-dynamo/nixl.git nixl-bench-src && \
     cd nixl-bench-src/benchmark/nixlbench && mkdir build && \
+    PKG_CONFIG_PATH=/usr/local/lib/pkgconfig:${PKG_CONFIG_PATH:-} \
     meson setup build/ --prefix=/opt/nixlbench --libdir=lib64 --buildtype=release \
         -Dnixl_path="${NIXL_PREFIX}" \
         -Dcudapath_lib="${CUDA_HOME}/lib64" \
-        -Dcudapath_inc="${CUDA_HOME}/include" && \
+        -Dcudapath_inc="${CUDA_HOME}/include" \
+        -Detcd_inc_path=/usr/local/include \
+        -Detcd_lib_path=/usr/local/lib && \
+    grep -q "ETCD_AVAILABLE.*1\|HAVE_ETCD.*1" build/meson-info/intro-buildoptions.json 2>/dev/null \
+        || meson configure build/ | grep -i etcd || true; \
     cd build && ninja && ninja install && \
     test -x /opt/nixlbench/bin/nixlbench && \
     cd /workspace && rm -rf nixl-bench-src
@@ -253,6 +276,18 @@ RUN pip install --no-cache-dir \
       "nixl>=1.0.0" \
       boto3 2>/dev/null || true
 
+# nixlbench runtime deps. The build stage uses libgflags-dev + libtomlplusplus-dev
+# (which provide headers + symlinks for compilation), but the trtllm runtime image
+# lacks the actual .so packages that nixlbench dlopens at start-up. Without these,
+# `nixlbench --help` fails with "libgflags.so.2.2: cannot open shared object file".
+# libhwloc15 is already present in the upstream trtllm image; only the other two
+# need to be installed.
+RUN apt-get update && apt-get install -y --no-install-recommends \
+        libgflags2.2 libtomlplusplus3 && \
+    rm -rf /var/lib/apt/lists/* && \
+    /opt/nixlbench/bin/nixlbench --help > /dev/null 2>&1 && \
+    echo "OK: nixlbench runtime deps satisfied"
+
 RUN echo "/opt/dynamo/venv"                                 > /opt/.trtllm_prefix \
  && echo "/opt/dynamo/venv/lib/python3.12/site-packages"    > /opt/.trtllm_sitepkg \
  && test -d /opt/dynamo/venv/lib/python3.12/site-packages/tensorrt_llm \
@@ -298,6 +333,13 @@ RUN pip install --no-cache-dir \
       "genai-perf>=0.0.16" \
       "nixl>=1.0.0" \
       boto3 2>/dev/null || true
+
+# nixlbench runtime deps — see trtllm-stage explanation above.
+RUN apt-get update && apt-get install -y --no-install-recommends \
+        libgflags2.2 libtomlplusplus3 && \
+    rm -rf /var/lib/apt/lists/* && \
+    /opt/nixlbench/bin/nixlbench --help > /dev/null 2>&1 && \
+    echo "OK: nixlbench runtime deps satisfied"
 
 # ---------------------
 # Combined stage — vLLM base + TRT-LLM overlay
