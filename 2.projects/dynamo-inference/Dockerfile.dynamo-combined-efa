@@ -173,6 +173,24 @@ RUN git clone --depth 1 --branch ${NIXL_REF} https://github.com/ai-dynamo/nixl.g
     cd build && ninja && ninja install && \
     cd /workspace && rm -rf nixl
 
+# nixlbench (C++ NIXL benchmark) — paired with NIXL above. Apt deps
+# libhwloc-dev libgflags-dev libtomlplusplus-dev mirror base/networking-base/Dockerfile.
+# Without this stage, /opt/nixlbench/ is missing and the COPY --from=networking
+# downstream fails the build (rev8 build #14 hit this exact gap).
+RUN set -eux; \
+    apt-get update && apt-get install -y --no-install-recommends \
+        libhwloc-dev libgflags-dev libtomlplusplus-dev && \
+    rm -rf /var/lib/apt/lists/*; \
+    git clone --depth 1 --branch ${NIXL_REF} https://github.com/ai-dynamo/nixl.git nixl-bench-src && \
+    cd nixl-bench-src/benchmark/nixlbench && mkdir build && \
+    meson setup build/ --prefix=/opt/nixlbench --libdir=lib64 --buildtype=release \
+        -Dnixl_path="${NIXL_PREFIX}" \
+        -Dcudapath_lib="${CUDA_HOME}/lib64" \
+        -Dcudapath_inc="${CUDA_HOME}/include" && \
+    cd build && ninja && ninja install && \
+    test -x /opt/nixlbench/bin/nixlbench && \
+    cd /workspace && rm -rf nixl-bench-src
+
 RUN git clone --branch ${NCCL_VERSION} --depth 1 https://github.com/NVIDIA/nccl.git && \
     cd nccl && \
     make -j$(nproc) src.build \
