@@ -189,13 +189,23 @@ RUN git clone --depth 1 --branch ${NIXL_REF} https://github.com/ai-dynamo/nixl.g
     ldconfig && cd /workspace && rm -rf nixl
 
 # --- nixlbench ---
-RUN git clone --depth 1 --branch ${NIXL_REF} https://github.com/ai-dynamo/nixl.git nixl-bench-src && \
+# nixlbench needs pkg-config + gflags-dev + etcd-cpp-api at configure time.
+# Without these, meson setup silently fails ("Dependency lookup for gflags
+# failed") and the binary never lands at /opt/nixlbench/. Verified live in
+# rev7 image dynamo-efa:9467d1460c71 — workshop NIXL test page calls
+# nixlbench but the binary was never installed.
+RUN set -eux; \
+    apt-get update && apt-get install -y --no-install-recommends \
+        pkg-config libgflags-dev libetcd-cpp-api-dev && \
+    rm -rf /var/lib/apt/lists/*; \
+    git clone --depth 1 --branch ${NIXL_REF} https://github.com/ai-dynamo/nixl.git nixl-bench-src && \
     cd nixl-bench-src/benchmark/nixlbench && mkdir build && \
     meson setup build/ --prefix=/opt/nixlbench --libdir=lib64 --buildtype=release \
         -Dnixl_path="${NIXL_PREFIX}" \
         -Dcudapath_lib="${CUDA_HOME}/lib64" \
         -Dcudapath_inc="${CUDA_HOME}/include" && \
     cd build && ninja && ninja install && \
+    test -x /opt/nixlbench/bin/nixlbench && \
     cd /workspace && rm -rf nixl-bench-src
 
 # --- NCCL v2.30.3-1 (GIN Device API) ---
