@@ -88,6 +88,8 @@ spec:
       extraPodSpec:
         hostNetwork: true
         dnsPolicy: ClusterFirstWithHostNet
+        nodeSelector:
+          node.kubernetes.io/instance-type: ml.p5.48xlarge
         tolerations:
           - { key: nvidia.com/gpu, operator: Exists, effect: NoSchedule }
         volumes:
@@ -114,7 +116,7 @@ spec:
                 --model meta-llama/Llama-3.1-8B-Instruct \
                 --served-model-name meta-llama/Llama-3.1-8B-Instruct \
                 --disaggregation-mode prefill \
-                --kv-transfer-config '{"kv_connector":"NixlConnector","kv_role":"kv_both"}' \
+                --kv-transfer-config '{"kv_connector":"NixlConnector","kv_role":"kv_both","kv_connector_extra_config":{"backends":["LIBFABRIC"]}}' \
                 --max-model-len 4096 \
                 --gpu-memory-utilization 0.85
           # Readiness probe on DYN_SYSTEM_PORT — required for Frontend discovery.
@@ -180,6 +182,8 @@ spec:
       extraPodSpec:
         hostNetwork: true
         dnsPolicy: ClusterFirstWithHostNet
+        nodeSelector:
+          node.kubernetes.io/instance-type: ml.p5.48xlarge
         tolerations:
           - { key: nvidia.com/gpu, operator: Exists, effect: NoSchedule }
         affinity:
@@ -215,7 +219,7 @@ spec:
                 --model meta-llama/Llama-3.1-8B-Instruct \
                 --served-model-name meta-llama/Llama-3.1-8B-Instruct \
                 --disaggregation-mode decode \
-                --kv-transfer-config '{"kv_connector":"NixlConnector","kv_role":"kv_both"}' \
+                --kv-transfer-config '{"kv_connector":"NixlConnector","kv_role":"kv_both","kv_connector_extra_config":{"backends":["LIBFABRIC"]}}' \
                 --max-model-len 4096 \
                 --gpu-memory-utilization 0.85
           # Readiness probe — see PrefillWorker above for full rationale.
