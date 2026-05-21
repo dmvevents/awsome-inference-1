@@ -189,14 +189,19 @@ RUN git clone --depth 1 --branch ${NIXL_REF} https://github.com/ai-dynamo/nixl.g
     ldconfig && cd /workspace && rm -rf nixl
 
 # --- nixlbench ---
-# nixlbench needs pkg-config + gflags-dev + etcd-cpp-api at configure time.
-# Without these, meson setup silently fails ("Dependency lookup for gflags
-# failed") and the binary never lands at /opt/nixlbench/. Verified live in
-# rev7 image dynamo-efa:9467d1460c71 — workshop NIXL test page calls
-# nixlbench but the binary was never installed.
+# Proven apt-deps recipe mirrors base/networking-base/Dockerfile (which
+# already ships /opt/nixlbench/bin/nixlbench in v5). Without these,
+# meson setup silently fails ("Dependency lookup for gflags failed")
+# and the binary never lands at /opt/nixlbench/. Verified missing live
+# in rev7 image dynamo-efa:9467d1460c71. The earlier rev8 attempt
+# referenced a libetcd-cpp-api-dev package that does not exist in
+# Ubuntu archives — the correct deps are libhwloc-dev (transport
+# topology), libgflags-dev (CLI parser), libtomlplusplus-dev (config
+# parsing). NIXL/nixlbench fall back to vendored asio+abseil via
+# meson subprojects when not found system-wide.
 RUN set -eux; \
     apt-get update && apt-get install -y --no-install-recommends \
-        pkg-config libgflags-dev libetcd-cpp-api-dev && \
+        libhwloc-dev libgflags-dev libtomlplusplus-dev && \
     rm -rf /var/lib/apt/lists/*; \
     git clone --depth 1 --branch ${NIXL_REF} https://github.com/ai-dynamo/nixl.git nixl-bench-src && \
     cd nixl-bench-src/benchmark/nixlbench && mkdir build && \
