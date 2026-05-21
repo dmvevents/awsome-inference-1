@@ -32,6 +32,48 @@ ERROR  ucp_perf_test_setup_endpoints() failed: Destination is unreachable
 
 **Note:** UCX is NOT used by Dynamo+NIXL+EFA in production; it's a workshop educational test. NIXL on EFA must use libfabric (the UCX path is hardcoded as default but cannot complete the handshake on EFA's RDM endpoint type — see vllm-project/vllm#41814).
 
+## Buildability of `nixlbench` from inside the running pod
+
+`nixl/benchmark/nixlbench/meson.build` requires a C++ shared lib named `nixl`.
+Inside `dynamo-efa:9467d1460c71` (PR #72 image) `libnixl.so` exists at
+`/opt/dynamo/venv/lib/python3.12/site-packages/.nixl_cu12.mesonpy.libs/libnixl.so`
+(shipped inside the Python wheel), but **the corresponding C++ headers
+(`nixl.h`, `nixl_descriptors.h`) are NOT installed**:
+
+```
+$ find / -name "nixl.h" -o -name "nixl_descriptors.h" 2>/dev/null
+(no results)
+```
+
+Verified live (2026-05-21): `pip install meson` + `meson setup build` for
+nixlbench fails with `ERROR: C++ shared or static library 'nixl' not found`
+even with `LDFLAGS=-L<libpath>` and `PKG_CONFIG_PATH` set, because the
+header path can't be located.
+
+**Why:** Dockerfile.efa builds NIXL via `git clone … && meson install`
+into `/opt/nvidia/nvda_nixl/` (per the comment header), but the actual
+runtime has the meson-installed `lib64/libnixl_*.so` at *that* path while
+the Python wheel ships its own copy of libnixl.so without dev artifacts.
+When the Dockerfile pip-installs the `nixl_cu12` wheel later in the
+Dynamo stage, the venv shadows the meson install for downstream loaders.
+
+**Fix needed in Dockerfile.efa** for nixlbench to build inside the
+running container:
+
+```dockerfile
+# After `meson install` for nixl, also install the dev headers:
+RUN cd nixl && meson install -C build  --destdir=/  # already done
+RUN cd /workspace/nixl/benchmark/nixlbench && \
+    meson setup build -Dnixl_path=/opt/nvidia/nvda_nixl && \
+    ninja -C build && \
+    install -m 0755 build/nixlbench /usr/local/bin/
+```
+
+Until that's added, the canonical L2 proof for NIXL on this image is
+**`/opt/nvidia/nvda_nixl/bin/nixl_example LIBFABRIC`** (single-pod test —
+PASS) plus the Round 2 cross-node Dynamo `/v1/completions` evidence
+(L3 application proving the same code path cross-node).
+
 ## L2 — NIXL: ✅ PASS — image is fine, default backend is wrong
 
 **The binary IS in the image.** It's at `/opt/nvidia/nvda_nixl/bin/nixl_example` (NIXL's official cross-node test). Available plugins it lists: `AZURE_BLOB GDS GDS_MT GUSLI LIBFABRIC OBJ POSIX UCX`.
