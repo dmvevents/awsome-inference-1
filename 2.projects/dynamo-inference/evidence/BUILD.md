@@ -1,19 +1,53 @@
-# Building the rev8 image (`dynamo-efa:520cfc584abb`)
+# Building the rev8 image hierarchy (`efa:520cfc584abb` → `dynamo-efa:520cfc584abb`)
 
-This document captures the exact build that produced the canonical
-campaign image. The Dockerfile + build.sh + buildspec.yml are
+This document captures the exact builds that produced the canonical
+campaign images. The Dockerfile + build.sh + buildspec.yml are
 snapshotted in `build-snapshot/` at the exact commit `520cfc5`.
 
-## Option A — pull the existing image
+## The 2-image hierarchy
 
-If the image is still in ECR (it is, as of campaign date):
+| Image | FROM | Built by | Purpose | Digest (canonical pin) |
+|---|---|---|---|---|
+| **`efa`** (networking base) | `nvcr.io/nvidia/cuda-dl-base:25.06-cuda12.9-devel-ubuntu24.04` (public NGC) | `Dockerfile.efa` | EFA + GDRCopy + UCX + NIXL + NCCL + nccl-tests + nixlbench | `sha256:6641dfa1e5cd5335cef541accd1299348be730f00d5b4371b288ed0557bd3d50` |
+| **`dynamo-efa`** (combined) | `nvcr.io/nvidia/ai-dynamo/{tensorrtllm,vllm}-runtime:1.1.0` (public NGC) + `--base-image efa:<sha>` | `Dockerfile.dynamo-combined-efa` | TRT-LLM + vLLM stages overlayed with networking from `efa` | `sha256:48e6e3104b523bc1828deda9966c48260de06bb8649348930f5440cad7f83d9c` |
+
+Both images are tagged with the same `<sha>` (the source commit SHA).
+The `dynamo-efa` image is what's deployed; the `efa` image is its
+networking-stack ancestor and is reused via `--base-image` to skip
+~25 minutes of rebuild on subsequent dynamo-efa builds.
+
+## Build chain
+
+```
+nvcr.io/nvidia/cuda-dl-base:25.06-cuda12.9-devel-ubuntu24.04   (public NGC)
+         │
+         ▼ Dockerfile.efa
+   efa:520cfc584abb                                            (digest: 6641dfa1...)
+         │
+         ▼ Dockerfile.dynamo-combined-efa  --base-image efa:520cfc584abb
+   dynamo-efa:520cfc584abb                                     (digest: 48e6e310...)
+         │
+         ▼ kubectl apply (DGD)
+   Frontend + PrefillWorker + DecodeWorker pods
+```
+
+## Option A — pull the existing images
+
+If the images are still in ECR (they are, as of campaign date):
 
 ```bash
+# Networking base
+docker pull ${ECR_REGISTRY}/efa:520cfc584abb
+# Combined (deployed image)
 docker pull ${ECR_REGISTRY}/dynamo-efa:520cfc584abb
 ```
 
-Image digest:
-`sha256:48e6e3104b523bc1828deda9966c48260de06bb8649348930f5440cad7f83d9c`
+Image digests (verify after pull with `docker manifest inspect`):
+
+| Image | Digest |
+|---|---|
+| `efa:520cfc584abb` | `sha256:6641dfa1e5cd5335cef541accd1299348be730f00d5b4371b288ed0557bd3d50` |
+| `dynamo-efa:520cfc584abb` | `sha256:48e6e3104b523bc1828deda9966c48260de06bb8649348930f5440cad7f83d9c` |
 
 If you don't have access to the campaign's ECR, mirror to your own ECR
 and update DGD manifests to point there. The image works in any region
