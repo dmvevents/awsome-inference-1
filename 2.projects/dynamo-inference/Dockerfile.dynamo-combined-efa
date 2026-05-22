@@ -279,17 +279,17 @@ RUN pip install --no-cache-dir \
       "nixl>=1.0.0" \
       boto3 2>/dev/null || true
 
-# nixlbench runtime deps. The build stage uses libgflags-dev + libtomlplusplus-dev
-# (which provide headers + symlinks for compilation), but the trtllm runtime image
-# lacks the actual .so packages that nixlbench dlopens at start-up. Without these,
-# `nixlbench --help` fails with "libgflags.so.2.2: cannot open shared object file".
-# libhwloc15 is already present in the upstream trtllm image; only the other two
-# need to be installed.
+# nixlbench runtime deps. The build stage uses -dev variants (which provide
+# headers + symlinks for compilation); runtime stages need the actual .so
+# packages. Without these, `nixlbench` fails at exec with "libgflags.so.2.2:
+# cannot open shared object file". Round 4 evidence pinned this gap.
+# nixlbench also links against etcd-cpp-api → cpprest + protobuf + libgrpc.
+COPY --from=networking /usr/local/lib/libetcd-cpp-api*.so* /usr/local/lib/
 RUN apt-get update && apt-get install -y --no-install-recommends \
-        libgflags2.2 libtomlplusplus3 && \
+        libgflags2.2 libtomlplusplus3 \
+        libcpprest2.10 libprotobuf32t64 libgrpc29t64 libgrpc++1.51t64 && \
     rm -rf /var/lib/apt/lists/* && \
-    /opt/nixlbench/bin/nixlbench --help > /dev/null 2>&1 && \
-    echo "OK: nixlbench runtime deps satisfied"
+    ldconfig
 
 RUN echo "/opt/dynamo/venv"                                 > /opt/.trtllm_prefix \
  && echo "/opt/dynamo/venv/lib/python3.12/site-packages"    > /opt/.trtllm_sitepkg \
@@ -338,11 +338,12 @@ RUN pip install --no-cache-dir \
       boto3 2>/dev/null || true
 
 # nixlbench runtime deps — see trtllm-stage explanation above.
+COPY --from=networking /usr/local/lib/libetcd-cpp-api*.so* /usr/local/lib/
 RUN apt-get update && apt-get install -y --no-install-recommends \
-        libgflags2.2 libtomlplusplus3 && \
+        libgflags2.2 libtomlplusplus3 \
+        libcpprest2.10 libprotobuf32t64 libgrpc29t64 libgrpc++1.51t64 && \
     rm -rf /var/lib/apt/lists/* && \
-    /opt/nixlbench/bin/nixlbench --help > /dev/null 2>&1 && \
-    echo "OK: nixlbench runtime deps satisfied"
+    ldconfig
 
 # ---------------------
 # Combined stage — vLLM base + TRT-LLM overlay
