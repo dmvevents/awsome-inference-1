@@ -186,6 +186,9 @@ RUN set -eux; \
     cd etcd-cpp-apiv3 && mkdir build && cd build && \
     cmake -DCMAKE_BUILD_TYPE=Release -DCMAKE_INSTALL_PREFIX=/usr/local .. && \
     make -j$(nproc) && make install && ldconfig && \
+    mkdir -p /usr/local/lib/pkgconfig && \
+    printf 'prefix=/usr/local\nexec_prefix=${prefix}\nlibdir=${exec_prefix}/lib\nincludedir=${prefix}/include\n\nName: etcd-cpp-api\nDescription: etcd C++ client library\nVersion: 0.15.4\nLibs: -L${libdir} -letcd-cpp-api -lcpprest -lprotobuf\nCflags: -I${includedir}\n' \
+        > /usr/local/lib/pkgconfig/etcd-cpp-api.pc && \
     pkg-config --exists etcd-cpp-api && pkg-config --modversion etcd-cpp-api && \
     cd /workspace && rm -rf etcd-cpp-apiv3
 
