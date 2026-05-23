@@ -51,6 +51,17 @@ This README links them in narrative order.)
 7. `2026-05-22T0900Z-round6-disagg-T11-T12-PASS/` — rev8 build #19 serving PASS
 8. `2026-05-22T1024Z-round7-kv-router-validation/` — KV router validation (2/2 PASS, 3 deferred)
 
+## Verification runs (re-runs of canonical experiments)
+
+| Date | Run | Result |
+|---|---|---|
+| 2026-05-23 | `verification-runs/2026-05-23-Cpass/` | **3/3 PASS** — nixlbench 46.95 GB/s (+0.1%), disagg T12 1.886s (identical), KV router 15.2× speedup (within noise). 1 LOW blocker (B-01 capture-counters path) discovered + RESOLVED. |
+
+Each verification-run subdir is a self-contained re-run of one or more canonical experiments,
+using the same image SHA. It documents whether documented `REPRODUCE.md` procedures still
+produce equivalent numbers run-to-run. See `verification-runs/<date>-<slug>/REPORT.md` for
+the summary table and any blockers encountered.
+
 ## Files at this level
 
 - `README.md` — this file
@@ -58,3 +69,4 @@ This README links them in narrative order.)
 - `BUILD.md` — exact build trigger commands and expected outputs
 - `build-snapshot/` — frozen Dockerfiles, build.sh, buildspec.yml at commit `520cfc5`
 - `<datetime-slug>/` — one directory per experiment (see SCHEMA.md at `../SCHEMA.md`)
+- `verification-runs/<date>-<slug>/` — re-runs verifying reproducibility of the above
