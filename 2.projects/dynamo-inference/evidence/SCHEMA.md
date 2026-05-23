@@ -65,7 +65,7 @@ registry, and substitutes `${ECR_REGISTRY}` everywhere.
 
 ```yaml
 parameters:
-  ECR_REGISTRY: "${ECR_REGISTRY:-${ECR_REGISTRY}}"
+  ECR_REGISTRY: "${ECR_REGISTRY}"
   IMAGE_TAG: "520cfc584abb"
   HF_TOKEN: "${HF_TOKEN}"          # required at runtime, never committed
   AWS_REGION: "us-east-2"

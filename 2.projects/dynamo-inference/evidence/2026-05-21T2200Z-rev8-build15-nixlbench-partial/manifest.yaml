@@ -1,7 +1,7 @@
 schema_version: "1.1"
 
 parameters:
-  ECR_REGISTRY: "${ECR_REGISTRY:-${ECR_REGISTRY}}"
+  ECR_REGISTRY: "${ECR_REGISTRY}"
   IMAGE_TAG: "33b2c52e8660"
   AWS_REGION: "us-east-2"
 
@@ -11,7 +11,7 @@ date: 2026-05-21T22:00:00Z
 status: PARTIAL
 
 image:
-  registry: "${ECR_REGISTRY:-${ECR_REGISTRY}}"
+  registry: "${ECR_REGISTRY}"
   repository: dynamo-efa
   tag: 33b2c52e8660
   digest: sha256:2a47ff97d54c25ae1a8afc7b602aaf4c667261ccd139a619ca7b6ec0717458c1

@@ -1,7 +1,7 @@
 schema_version: "1.1"
 
 parameters:
-  ECR_REGISTRY: "${ECR_REGISTRY:-${ECR_REGISTRY}}"
+  ECR_REGISTRY: "${ECR_REGISTRY}"
   IMAGE_TAG: "520cfc584abb"
   AWS_REGION: "us-east-2"
 experiment_id: nixlbench-multinode-libfabric
@@ -10,7 +10,7 @@ date: 2026-05-22T05:50:00Z
 status: PASS
 
 image:
-  registry: "${ECR_REGISTRY:-${ECR_REGISTRY}}"
+  registry: "${ECR_REGISTRY}"
   repository: dynamo-efa
   tag: 520cfc584abb
   digest: sha256:48e6e3104b523bc1828deda9966c48260de06bb8649348930f5440cad7f83d9c
