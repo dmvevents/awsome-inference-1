@@ -16,7 +16,7 @@
 #
 # Historical context:
 #   Previously `FROM ${NETWORKING_BASE}` with a default pointing at a private
-#   ECR (or the personal public.ecr.aws/v9l4g5s4 namespace). Both were
+#   ECR (or the personal public.ecr.aws/<alias> namespace). Both were
 #   flagged by distribution review: a published container must `FROM` a
 #   publicly reproducible base. This file eliminates that dependency.
 #

@@ -22,11 +22,11 @@ MODEL="${MODEL:-facebook/opt-125m}"
 K8S_NAMESPACE="${K8S_NAMESPACE:-default}"
 SMOKE_ALLOW_WARN="${SMOKE_ALLOW_WARN:-0}"
 AWS_REGION="${AWS_REGION:-us-east-2}"
-AWS_ACCOUNT_ID="${AWS_ACCOUNT_ID:-058264135704}"
+AWS_ACCOUNT_ID="${AWS_ACCOUNT_ID:-$(aws sts get-caller-identity --region "$AWS_REGION" --query Account --output text)}"
 ECR_REPO_PREFIX="${ECR_REPO_PREFIX:-}"
 ECR="${AWS_ACCOUNT_ID}.dkr.ecr.${AWS_REGION}.amazonaws.com"
 POD_NAME="dynamo-smoke-${SHA}"
-LOCK_FILE="${HOME}/.claude/cluster-lock-h100.json"
+LOCK_FILE="${SMOKE_LOCK_FILE:-${HOME}/.cache/dynamo-smoke/cluster-lock-h100.json}"
 OUT_DIR="$(cd "$(dirname "$0")" && pwd)/../out/${SHA}"
 
 if [ -z "$IMAGE_URI" ]; then
@@ -52,6 +52,7 @@ check_warning()  { local name="$1"; shift; if "$@"; then log "  T${name}: PASS";
 log "=== smoke.sh SHA=${SHA} image=${IMAGE_URI} model=${MODEL} ==="
 
 # Cluster lock (claim H100 pool)
+mkdir -p "$(dirname "$LOCK_FILE")"
 if [ -f "$LOCK_FILE" ]; then
     HOLDER=$(python3 -c "import json;print(json.load(open('$LOCK_FILE')).get('holder') or '')")
     if [ -n "$HOLDER" ] && [ "$HOLDER" != "smoke-${SHA}" ]; then

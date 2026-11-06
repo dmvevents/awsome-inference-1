@@ -46,7 +46,7 @@ ARG VLLM_IMAGE=nvcr.io/nvidia/ai-dynamo/vllm-runtime:1.1.0
 #   aquasec/trivy + anchore/syft                     — Docker Hub, scanner-only
 # The networking stages below build the EFA + NCCL + UCX + NIXL stack from
 # source on top of cuda-dl-base, so there is NO dependency on a private
-# ECR or the personal public.ecr.aws/v9l4g5s4 namespace.
+# ECR or the personal public.ecr.aws/<alias> namespace.
 
 ARG CUDA_DL_BASE=nvcr.io/nvidia/cuda-dl-base:25.06-cuda12.9-devel-ubuntu24.04
 ARG GDRCOPY_REF=v2.5.2

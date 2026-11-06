@@ -39,7 +39,7 @@ spec:
       replicas: 1
       extraPodSpec:
         mainContainer:
-          image: 159553542841.dkr.ecr.us-west-2.amazonaws.com/dynamo-combined-efa:latest
+          image: <AWS_ACCOUNT_ID>.dkr.ecr.us-west-2.amazonaws.com/dynamo-combined-efa:latest
           imagePullPolicy: IfNotPresent
           command: ["/bin/bash", "-c"]
           args:
@@ -74,7 +74,7 @@ spec:
       replicas: 1
       extraPodSpec:
         mainContainer:
-          image: 159553542841.dkr.ecr.us-west-2.amazonaws.com/dynamo-combined-efa:latest
+          image: <AWS_ACCOUNT_ID>.dkr.ecr.us-west-2.amazonaws.com/dynamo-combined-efa:latest
           imagePullPolicy: IfNotPresent
           securityContext: { privileged: true }
           command: ["/bin/bash", "-c"]
@@ -160,7 +160,7 @@ spec:
       replicas: 1
       extraPodSpec:
         mainContainer:
-          image: 159553542841.dkr.ecr.us-west-2.amazonaws.com/dynamo-combined-efa:latest
+          image: <AWS_ACCOUNT_ID>.dkr.ecr.us-west-2.amazonaws.com/dynamo-combined-efa:latest
           imagePullPolicy: IfNotPresent
           securityContext: { privileged: true }
           command: ["/bin/bash", "-c"]

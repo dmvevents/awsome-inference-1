@@ -1,7 +1,7 @@
 # Reproducibility
 
 How to reproduce any evidence committed under `docs/evidence/`
-without needing access to the private ECR account (058264135704)
+without needing access to the private ECR account
 referenced in the logs.
 
 The committed evidence is a forensic record — it quotes the exact
@@ -14,7 +14,7 @@ and upstream maintainers reproduce from **source** using this doc.
 
 - Docker 24+ (BuildKit), ~60 GB free disk, ~120 GB peak during build
 - AWS account with EC2 `p5.48xlarge` (8× H100) quota for multi-node tests
-  (Objective 3 below is the only lane that needs GPUs; the build itself
+  (only the gates in section 4 need GPUs; the build itself
   runs on any x86_64 Linux host)
 - `kubectl` + an EKS or SageMaker HyperPod cluster for end-to-end tests
 - HuggingFace access token for gated models (Llama-3.1 etc.)
@@ -64,7 +64,7 @@ are pinned in the checked-out source.
 Log lines like:
 
 ```
-image=058264135704.dkr.ecr.us-east-2.amazonaws.com/dynamo-efa:9467d1460c71
+image=<AWS_ACCOUNT_ID>.dkr.ecr.us-east-2.amazonaws.com/dynamo-efa:9467d1460c71
 ```
 
 refer to our build account's private ECR — **you won't have access,
@@ -74,9 +74,9 @@ external reproduction, substitute with the image you just built.
 
 Similarly, logs reference:
 
-- **Internal node names** like `hyperpod-i-01aee349f9991c414` —
+- **Internal node names** like `hyperpod-i-<instance-id>` —
   our HyperPod cluster nodes; swap for your own k8s node names
-- **Private subnet IPs** like `10.1.3.30`, `10.1.3.73` — our pod IPs;
+- **Private subnet IPs** like `10.x.x.x` — our pod IPs;
   yours will differ
 
 Treat them as placeholders. The SHA and commit hash are the load-bearing
@@ -149,7 +149,7 @@ operator fix lands. No rebuild required.
 | `b1f64c6` | Merge 3 separate DGDs → 1 canonical DGD (upstream `disagg.yaml` pattern) |
 | `9592bdf` | `DYN_NAMESPACE_WORKER_SUFFIX=""` override attempt |
 | `b2f1c78` | Dynamo 1.0.1 → 1.1.0 runtime bump |
-| `9467d14` | OKRs 2026-05-06 |
+| `9467d14` | 2026-05-06 snapshot; source of image tag `9467d1460c71` |
 
 ---
 

@@ -22,12 +22,12 @@
 #   docker build -f Dockerfile.dynamo-combined-efa \
 #       -t dynamo-combined-efa:v1 .
 #
-# The default NETWORKING_BASE is public.ecr.aws/v9l4g5s4/networking-base:v5
+# The default NETWORKING_BASE is public.ecr.aws/<alias>/networking-base:v5
 # (anonymous pull, ~17 GB). Override if you mirror the base yourself:
 #   docker build --build-arg NETWORKING_BASE=your-registry/networking-base:v5 \
 #       -f Dockerfile.dynamo-combined-efa -t dynamo-combined-efa:v1 .
 #
-# Test distribution (per ticket P416074947):
+# Test distribution:
 #   - g5.8xlarge     ( 1 EFA, A10G)  — basic EFA + single-backend smoke
 #   - p5.48xlarge    (32 EFA, H100)  — multi-rail EFA + both backends
 #   - p5en.48xlarge  (16 EFA, H200)  — multi-rail EFA + both backends

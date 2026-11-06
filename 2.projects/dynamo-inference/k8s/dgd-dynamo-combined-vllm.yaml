@@ -60,7 +60,7 @@ spec:
       replicas: 1
       extraPodSpec:
         mainContainer:
-          image: 058264135704.dkr.ecr.us-east-2.amazonaws.com/dynamo-efa:9467d1460c71
+          image: <AWS_ACCOUNT_ID>.dkr.ecr.us-east-2.amazonaws.com/dynamo-efa:9467d1460c71
           imagePullPolicy: IfNotPresent
           command: ["/bin/bash", "-c"]
           args:
@@ -102,7 +102,7 @@ spec:
           - name: shm
             emptyDir: { medium: Memory, sizeLimit: 64Gi }
         mainContainer:
-          image: 058264135704.dkr.ecr.us-east-2.amazonaws.com/dynamo-efa:9467d1460c71
+          image: <AWS_ACCOUNT_ID>.dkr.ecr.us-east-2.amazonaws.com/dynamo-efa:9467d1460c71
           imagePullPolicy: IfNotPresent
           securityContext: { privileged: true }
           command: ["/bin/bash", "-c"]
@@ -205,7 +205,7 @@ spec:
           - name: shm
             emptyDir: { medium: Memory, sizeLimit: 64Gi }
         mainContainer:
-          image: 058264135704.dkr.ecr.us-east-2.amazonaws.com/dynamo-efa:9467d1460c71
+          image: <AWS_ACCOUNT_ID>.dkr.ecr.us-east-2.amazonaws.com/dynamo-efa:9467d1460c71
           imagePullPolicy: IfNotPresent
           securityContext: { privileged: true }
           command: ["/bin/bash", "-c"]

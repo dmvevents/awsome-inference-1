@@ -257,11 +257,6 @@ docker build -f Dockerfile.dynamo-combined-efa -t dynamo-combined-efa:latest .
 
 **Expected image size:** ~35-40 GB
 
-**Prebuilt image:**
-```bash
-docker pull public.ecr.aws/v9l4g5s4/dynamo-combined:latest
-```
-
 ### Build Options
 
 ```bash
@@ -509,8 +504,9 @@ show non-zero RDMA traffic (guards against TCP fallback).
 **Warning gates (T8–T10):** no NCCL/NVLS errors in logs, SBOM present at
 `/opt/security/`, pod teardown completes within 60 s.
 
-Runs target `ml.p5.48xlarge` only (H100); P5en H200 nodes are reserved.
-The harness claims `~/.claude/cluster-lock-h100.json` before deploy and
+Runs target `ml.p5.48xlarge` only (H100).
+The harness claims a lock file (`SMOKE_LOCK_FILE`, default
+`~/.cache/dynamo-smoke/cluster-lock-h100.json`) before deploy and
 releases it via `trap` on exit.
 
 Per-run evidence lands in `tests/out/<SHA>/` (logs, NCCL arches, hw_counters,

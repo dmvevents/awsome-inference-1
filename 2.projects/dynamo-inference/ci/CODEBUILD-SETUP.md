@@ -129,8 +129,8 @@ Inline policy (minimum required — tighten Resource scoping in prod):
         "ecr:PutImage"
       ],
       "Resource": [
-        "arn:aws:ecr:us-east-2:058264135704:repository/awsi-efa-base",
-        "arn:aws:ecr:us-east-2:058264135704:repository/awsi-dynamo-combined-efa"
+        "arn:aws:ecr:us-east-2:<AWS_ACCOUNT_ID>:repository/awsi-efa-base",
+        "arn:aws:ecr:us-east-2:<AWS_ACCOUNT_ID>:repository/awsi-dynamo-combined-efa"
       ]
     },
     {
@@ -142,25 +142,26 @@ Inline policy (minimum required — tighten Resource scoping in prod):
 }
 ```
 
-Substitute `058264135704` + `us-east-2` + `<your-sbom-bucket>`.
+Substitute `<AWS_ACCOUNT_ID>` + `us-east-2` + `<your-sbom-bucket>`.
 
 ### 3. Create the CodeBuild project
 
 ```bash
+AWS_ACCOUNT_ID="$(aws sts get-caller-identity --region us-east-2 --query Account --output text)"
 aws codebuild create-project \
   --name dynamo-inference \
   --region us-east-2 \
   --source type=GITHUB,location=https://github.com/dmvevents/awsome-inference-1.git,buildspec=2.projects/dynamo-inference/buildspec.yml \
   --artifacts type=NO_ARTIFACTS \
   --environment "type=LINUX_CONTAINER,computeType=BUILD_GENERAL1_2XLARGE,image=aws/codebuild/amazonlinux2-x86_64-standard:5.0,privilegedMode=true,environmentVariables=[
-    {name=AWS_ACCOUNT_ID,value=058264135704},
+    {name=AWS_ACCOUNT_ID,value=${AWS_ACCOUNT_ID}},
     {name=AWS_DEFAULT_REGION,value=us-east-2},
     {name=ECR_REPO_PREFIX,value=},
     {name=CUDA_ARCH,value=90},
     {name=S3_SBOM_BUCKET,value=s3://your-sbom-bucket/dynamo-inference},
     {name=CVE_ALLOW_CRITICAL,value=0}
   ]" \
-  --service-role arn:aws:iam::058264135704:role/CodeBuildDynamoInferenceRole \
+  --service-role arn:aws:iam::${AWS_ACCOUNT_ID}:role/CodeBuildDynamoInferenceRole \
   --timeout-in-minutes 120
 ```
 

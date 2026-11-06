@@ -32,8 +32,9 @@ Env overrides:
 | `SMOKE_ALLOW_WARN`   | `0`                        | set `1` to promote T8–T10 warnings to pass |
 | `K8S_NAMESPACE`      | `default`                  | |
 | `AWS_REGION`         | `us-east-2`                | |
-| `AWS_ACCOUNT_ID`     | `058264135704`             | |
+| `AWS_ACCOUNT_ID`     | caller's account (`aws sts get-caller-identity`) | |
 | `ECR_REPO_PREFIX`    | empty                      | matches buildspec.yml |
+| `SMOKE_LOCK_FILE`    | `~/.cache/dynamo-smoke/cluster-lock-h100.json` | cluster lock claimed for the run |
 
 ## Criteria
 
@@ -58,12 +59,10 @@ Warning (T8–T10) — fails the run by default, can be overridden with
 
 Enforced by the harness:
 
-- **H100 only.** `nodeSelector` pins pods to `node.kubernetes.io/instance-type=ml.p5.48xlarge`
-  (`hyperpod-i-01aee349f9991c414` / `hyperpod-i-0a3eb6d3953cceaa7`). P5en H200 nodes are
-  reserved for another engineer — never target them.
-- **Cluster lock.** `~/.claude/cluster-lock-h100.json` is claimed at start, released on
+- **H100 only.** `nodeSelector` pins pods to `node.kubernetes.io/instance-type=ml.p5.48xlarge`.
+- **Cluster lock.** `$SMOKE_LOCK_FILE` (default `~/.cache/dynamo-smoke/cluster-lock-h100.json`) is claimed at start, released on
   exit (`trap teardown EXIT`). If the lock is held by someone else, the harness aborts.
-- **Pod-freshness preflight (I685).** Any stale `smoke-<SHA>` pod is deleted before deploy.
+- **Pod-freshness preflight.** Any stale `smoke-<SHA>` pod is deleted before deploy.
 - **Single-pod scope.** This is a smoke test, not a multi-node training validation.
   For 2-node NIXL/KV-transfer evidence, see `tests/e2e-evidence/`.
 
